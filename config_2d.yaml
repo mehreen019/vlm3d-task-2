@@ -1,0 +1,188 @@
+# 2D Training Configuration for VLM3D Challenge Task 2
+# Optimized for training on 2D slices extracted from 3D CT volumes
+
+experiment:
+  name: 'vlm3d_task2_2d_baseline'
+  description: 'Multi-abnormality classification using 2D slices from CT-RATE'
+  task: 'multi_label_classification'
+  num_classes: 18
+  approach: '2d_slices'  # New field to indicate 2D approach
+  class_names: [
+    'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion',
+    'Emphysema', 'Fibrosis', 'Fracture', 'Hernia', 'Infiltration',
+    'Mass', 'Nodule', 'Pleural_Thickening', 'Pneumonia', 'Pneumothorax',
+    'Support_Devices', 'Thickening', 'No_Finding'
+  ]
+
+data:
+  dataset_name: 'ct_rate_2d'
+  data_dir: './data/ct_rate_2d'  # 2D slice directory
+  
+  # 2D-specific parameters
+  input_channels: 1  # Grayscale CT slices
+  image_size: [512, 512]  # 2D slice dimensions [H, W]
+  resize_to: [384, 384]  # Resize for training (memory efficiency)
+  
+  # Training parameters (can be much larger for 2D)
+  batch_size: 32  # Much larger batch size possible
+  num_workers: 8
+  pin_memory: true
+  
+  # Data loading strategy
+  slice_sampling: 'all_slices'  # Options: all_slices, per_volume_sampling
+  volume_aggregation: 'max_pooling'  # How to combine predictions from multiple slices
+  
+  # Preprocessing
+  normalize: true
+  intensity_normalization: 'z_score'  # z-score normalization per slice
+  
+  # Augmentation (2D-specific)
+  augmentation:
+    enabled: true
+    horizontal_flip: 0.5
+    vertical_flip: 0.0  # Usually don't flip medical images vertically
+    rotation_range: 15  # degrees
+    zoom_range: [0.9, 1.1]
+    intensity_shift: 0.1
+    contrast_range: [0.9, 1.1]
+    gaussian_noise: 0.02
+    elastic_deformation: 0.3
+    cutout: 
+      enabled: true
+      max_holes: 2
+      max_height: 32
+      max_width: 32
+
+model:
+  # 2D Model Architecture
+  architecture: 'resnet2d'  # Options: resnet2d, densenet2d, efficientnet2d, vit2d
+  backbone: 'resnet50'  # Pre-trained on ImageNet
+  pretrained: true
+  
+  # Model parameters
+  dropout: 0.5
+  num_features: 2048  # ResNet50 feature dimension
+  activation: 'relu'
+  
+  # Advanced options
+  use_attention: true  # Spatial attention mechanism
+  attention_type: 'cbam'  # CBAM, SE, or spatial
+  
+  # Multi-slice aggregation (for volume-level predictions)
+  aggregation_method: 'attention_pooling'  # Options: max, mean, attention_pooling, lstm
+  aggregation_features: 512
+
+training:
+  # Optimizer
+  optimizer: 'adamw'
+  learning_rate: 3e-4  # Slightly higher for 2D
+  weight_decay: 1e-4
+  
+  # Scheduler
+  scheduler: 'cosine_with_warmup'
+  warmup_epochs: 3
+  max_epochs: 100  # More epochs possible with faster 2D training
+  
+  # Early stopping
+  early_stopping_patience: 15
+  monitor_metric: 'val_macro_auc'
+  monitor_mode: 'max'
+  
+  # Training dynamics
+  gradient_clip: 1.0
+  mixed_precision: true
+  accumulate_grad_batches: 1  # No need with larger batch sizes
+  
+  # Loss function
+  loss_function: 'asymmetric_focal_loss'  # Good for multi-label with imbalance
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+  pos_weight_adjustment: true
+  class_weights: 'balanced'  # Auto-compute from prevalences
+  
+  # Validation
+  val_check_interval: 0.25
+  limit_val_batches: 1.0
+
+# 2D-specific data handling
+data_processing:
+  # Slice-level processing
+  slice_preprocessing:
+    clip_hu: true
+    hu_min: -1000
+    hu_max: 400
+    normalize_intensity: true
+    remove_bed_artifacts: false  # 2D slices may not have bed artifacts
+    
+  # Volume-level aggregation for final predictions
+  volume_prediction:
+    method: 'slice_aggregation'  # Combine slice predictions
+    aggregation_weights: 'attention'  # Learn importance weights
+    min_slices_required: 3  # Minimum slices needed for volume prediction
+    confidence_thresholding: true
+
+hardware:
+  accelerator: 'gpu'
+  devices: 1
+  precision: 16  # Mixed precision
+  strategy: 'auto'
+  
+  # Memory optimization for 2D
+  find_unused_parameters: false
+  sync_batchnorm: false
+
+logging:
+  use_wandb: true
+  project_name: 'vlm3d_challenge_2d'
+  experiment_group: '2d_baseline'
+  log_every_n_steps: 25
+  
+  # Enhanced logging for 2D approach
+  log_slice_predictions: true  # Log individual slice predictions
+  log_volume_aggregation: true  # Log how slices combine to volume prediction
+  save_prediction_examples: true
+  
+  # Model checkpointing
+  save_top_k: 5
+  save_weights_only: false
+  every_n_epochs: 5
+
+# Evaluation settings
+evaluation:
+  # Metrics
+  primary_metric: 'macro_auc'
+  secondary_metrics: ['micro_auc', 'weighted_auc', 'average_precision']
+  per_class_metrics: true
+  
+  # Thresholding
+  threshold_optimization: true
+  threshold_method: 'f1_optimal'  # Optimize F1 score per class
+  
+  # Volume-level evaluation
+  evaluate_volume_level: true  # Main evaluation
+  evaluate_slice_level: true   # Additional analysis
+  
+  # Test-time augmentation
+  tta:
+    enabled: true
+    n_augmentations: 5
+    augmentation_strength: 0.3
+
+paths:
+  checkpoint_dir: './outputs/checkpoints/2d'
+  log_dir: './outputs/logs/2d'
+  prediction_dir: './outputs/predictions/2d'
+  visualization_dir: './outputs/visualizations/2d'
+
+# Quick test configuration override
+quick_test:
+  data:
+    batch_size: 16
+    resize_to: [224, 224]  # Smaller images for quick testing
+  model:
+    backbone: 'resnet18'  # Smaller model
+  training:
+    max_epochs: 5
+    early_stopping_patience: 3
+  logging:
+    use_wandb: false

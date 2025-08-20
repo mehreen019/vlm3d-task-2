@@ -91,7 +91,7 @@ pip install pytest  # Testing
 
 # Install additional useful libraries
 echo "📦 Installing additional libraries..."
-pip insatall requests  # HTTP requests
+pip install requests  # HTTP requests
 pip install huggingface_hub  # For model sharing
 
 echo "✅ Environment setup complete!"

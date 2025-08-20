@@ -279,10 +279,12 @@ class CTRateDownloader:
                     repo_type="dataset"
                 )
 
+                # Ensure output directory exists
                 final_path = os.path.join(self.output_dir, split, volume_name)
                 os.makedirs(os.path.dirname(final_path), exist_ok=True)
-                if not os.path.exists(final_path):
-                    shutil.move(local_path, final_path)  # cross-drive safe
+
+                # Copy file from cache to output_dir
+                shutil.copy2(local_path, final_path)
 
                 print(f"✅ Downloaded: {final_path}")
 
