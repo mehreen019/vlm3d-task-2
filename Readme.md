@@ -34,3 +34,12 @@ Also enable `--download-volumes` to download the actual CT volumes.
 ```bash
 python ct_rate_downloader.py --max-storage-gb 10 --download-volumes
 ```
+
+## 2d slice extraction
+
+The 2D slice extraction script is located in `2d_slice_extractor.py`.
+It uses the `ct_rate_data` directory as the input and creates the `ct_rate_2d` directory for the output.
+
+```bash
+python 2d_slice_extractor.py --data-dir ./ct_rate_data --output-dir ./ct_rate_2d --strategy multi_slice --slices-per-volume 12 
+```
