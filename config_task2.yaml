@@ -1,0 +1,50 @@
+# Configuration for Multi-Abnormality Classification
+# Matches existing CT-RATE data pipeline structure
+
+# Data paths (adjust if your structure is different)
+data:
+  ct_rate_dir: "./ct_rate_data"  # Original CT-RATE data from downloader
+  slice_dir: "./ct_rate_2d"      # Extracted slices from slice extractor
+  
+# Model configuration
+model:
+  backbone: "resnet50"  # resnet50, resnet101, efficientnet_b0
+  dropout_rate: 0.3
+  num_classes: 18
+
+# Training hyperparameters
+training:
+  batch_size: 32
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  max_epochs: 50
+  early_stopping_patience: 10
+  num_workers: 4
+  use_mixed_precision: true
+
+# Output directories
+output:
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
+  results_dir: "./results"
+
+# 18 CT-RATE abnormality classes
+classes:
+  - "Atelectasis"
+  - "Cardiomegaly"
+  - "Consolidation"
+  - "Edema"
+  - "Effusion"
+  - "Emphysema"
+  - "Fibrosis"
+  - "Fracture"
+  - "Hernia"
+  - "Infiltration"
+  - "Mass"
+  - "Nodule"
+  - "Pleural_Thickening"
+  - "Pneumonia"
+  - "Pneumothorax"
+  - "Support_Devices"
+  - "Thickening"
+  - "No_Finding" 

@@ -305,19 +305,22 @@ def main():
     # Step 1: Download metadata
     df = downloader.download_metadata()
     
-    # Step 2: Analyze data distribution
+    # Step 2: Download labels
+    labels_df = downloader.download_labels()
+    
+    # Step 3: Analyze data distribution
     stats = downloader.analyze_data_distribution(df)
     
-    # Step 3: Perform stratified sampling
+    # Step 4: Perform stratified sampling
     sampled_df = downloader.stratified_sample(df)
     
-    # Step 4: Create data splits
+    # Step 5: Create data splits
     train, val, test = downloader.create_data_splits(sampled_df)
     
-    # Step 5: Save splits and metadata
+    # Step 6: Save splits and metadata
     downloader.save_splits_and_metadata(train, val, test, stats)
     
-    # Step 6: Download actual volumes (if requested)
+    # Step 7: Download actual volumes (if requested)
     if args.download_volumes:
         downloader.download_ct_volumes(train, "train")
         downloader.download_ct_volumes(val, "valid")

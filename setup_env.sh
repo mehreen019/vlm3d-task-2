@@ -94,6 +94,13 @@ echo "📦 Installing additional libraries..."
 pip install requests  # HTTP requests
 pip install huggingface_hub  # For model sharing
 
+# Install multi-label classification specific libraries
+echo "🎯 Installing multi-label classification libraries..."
+pip install pytorch-lightning  # Clean training framework
+pip install torchmetrics  # Comprehensive metrics
+pip install scikit-multilearn  # Multi-label utilities
+pip install imbalanced-learn  # Class imbalance handling
+
 echo "✅ Environment setup complete!"
 echo ""
 echo "📋 Summary of installed packages:"
