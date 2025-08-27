@@ -78,6 +78,10 @@ class CTSliceDataset(Dataset):
         """Merge slice metadata with multi-abnormality labels"""
         # The key is to match by VolumeName from slice metadata to multi-abnormality labels
         
+        logger.info(f"Multi-abnormality DF columns: {list(multi_abnormality_df.columns)}")
+        logger.info(f"Sample volume names in labels: {multi_abnormality_df['VolumeName'].head().tolist()}")
+        logger.info(f"Sample volume names in slices: {slice_df['volume_name'].head().tolist()}")
+        
         # Create a mapping from volume name to labels
         volume_labels = {}
         for _, row in multi_abnormality_df.iterrows():
@@ -89,6 +93,12 @@ class CTSliceDataset(Dataset):
                 else:
                     labels[class_name] = 0
             volume_labels[volume_name] = labels
+        
+        # Check for matches
+        slice_volumes = set(slice_df['volume_name'])
+        label_volumes = set(volume_labels.keys())
+        matched_volumes = slice_volumes.intersection(label_volumes)
+        logger.info(f"Slice volumes: {len(slice_volumes)}, Label volumes: {len(label_volumes)}, Matched: {len(matched_volumes)}")
         
         # Add labels to slice dataframe
         for class_name in self.abnormality_classes:
@@ -303,6 +313,17 @@ class MultiAbnormalityModel(pl.LightningModule):
             self.log(f'val_{name}', value, on_epoch=True, prog_bar=True)
             metric.reset()
     
+    def test_step(self, batch, batch_idx):
+        """Test step (same as validation)"""
+        return self.validation_step(batch, batch_idx)
+    
+    def on_test_epoch_end(self):
+        """Log test metrics"""
+        for name, metric in self.val_metrics.items():
+            value = metric.compute()
+            self.log(f'test_{name}', value, on_epoch=True)
+            metric.reset()
+    
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
@@ -489,7 +510,11 @@ def train_model(args):
     
     # Test on validation set
     logger.info("Testing on validation set...")
-    trainer.test(model, val_loader, ckpt_path='best')
+    try:
+        trainer.test(model, val_loader, ckpt_path='best')
+    except Exception as e:
+        logger.warning(f"Test step failed: {e}")
+        logger.info("Continuing without test step...")
     
     return model, trainer
 
