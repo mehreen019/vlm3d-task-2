@@ -43,13 +43,16 @@ class CTSliceExtractor:
         self.target_size = (224, 224)  # More VLM-friendly size, reduces storage
         
         # CT-RATE specific abnormalities
+
+        # 18 abnormalities
         self.abnormality_classes = [
-            'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion',
-            'Emphysema', 'Fibrosis', 'Fracture', 'Hernia', 'Infiltration',
-            'Mass', 'Nodule', 'Pleural_Thickening', 'Pneumonia', 'Pneumothorax',
-            'Support_Devices', 'Thickening', 'No_Finding'
+            "Cardiomegaly", "Hiatal hernia", "Atelectasis", "Pulmonary fibrotic sequela",
+            "Peribronchial thickening", "Interlobular septal thickening", "Medical material",
+            "Pericardial effusion", "Lymphadenopathy", "Lung nodule", "Pleural effusion",
+            "Consolidation", "Lung opacity", "Mosaic attenuation pattern", "Bronchiectasis",
+            "Emphysema", "Arterial wall calcification", "Coronary artery wall calcification"
         ]
-        
+
         logger.info(f"Initialized slice extractor: {slice_strategy} strategy, "
                    f"{slices_per_volume} slices per volume")
     

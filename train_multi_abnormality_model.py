@@ -53,11 +53,13 @@ class CTSliceDataset(Dataset):
         
         # 18 abnormality classes from CT-RATE
         self.abnormality_classes = [
-            'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion',
-            'Emphysema', 'Fibrosis', 'Fracture', 'Hernia', 'Infiltration',
-            'Mass', 'Nodule', 'Pleural_Thickening', 'Pneumonia', 'Pneumothorax',
-            'Support_Devices', 'Thickening', 'No_Finding'
+            "Cardiomegaly", "Hiatal hernia", "Atelectasis", "Pulmonary fibrotic sequela",
+            "Peribronchial thickening", "Interlobular septal thickening", "Medical material",
+            "Pericardial effusion", "Lymphadenopathy", "Lung nodule", "Pleural effusion",
+            "Consolidation", "Lung opacity", "Mosaic attenuation pattern", "Bronchiectasis",
+            "Emphysema", "Arterial wall calcification", "Coronary artery wall calcification"
         ]
+
         
         # Load and merge multi-abnormality labels if provided
         if multi_abnormality_df is not None:
@@ -210,10 +212,11 @@ class MultiAbnormalityModel(pl.LightningModule):
         
         # Class names for logging
         self.class_names = [
-            'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion',
-            'Emphysema', 'Fibrosis', 'Fracture', 'Hernia', 'Infiltration',
-            'Mass', 'Nodule', 'Pleural_Thickening', 'Pneumonia', 'Pneumothorax',
-            'Support_Devices', 'Thickening', 'No_Finding'
+            "Cardiomegaly", "Hiatal hernia", "Atelectasis", "Pulmonary fibrotic sequela",
+            "Peribronchial thickening", "Interlobular septal thickening", "Medical material",
+            "Pericardial effusion", "Lymphadenopathy", "Lung nodule", "Pleural effusion",
+            "Consolidation", "Lung opacity", "Mosaic attenuation pattern", "Bronchiectasis",
+            "Emphysema", "Arterial wall calcification", "Coronary artery wall calcification"
         ]
     
     def _build_backbone(self, model_name: str):

@@ -39,11 +39,13 @@ class CTRateDownloader:
 
         # 18 abnormalities
         self.abnormality_classes = [
-            'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion',
-            'Emphysema', 'Fibrosis', 'Fracture', 'Hernia', 'Infiltration',
-            'Mass', 'Nodule', 'Pleural_Thickening', 'Pneumonia', 'Pneumothorax',
-            'Support_Devices', 'Thickening', 'No_Finding'
+            "Cardiomegaly", "Hiatal hernia", "Atelectasis", "Pulmonary fibrotic sequela",
+            "Peribronchial thickening", "Interlobular septal thickening", "Medical material",
+            "Pericardial effusion", "Lymphadenopathy", "Lung nodule", "Pleural effusion",
+            "Consolidation", "Lung opacity", "Mosaic attenuation pattern", "Bronchiectasis",
+            "Emphysema", "Arterial wall calcification", "Coronary artery wall calcification"
         ]
+
         
         logger.info(f"Initialized downloader for max {self.max_samples} samples (~{max_storage_gb}GB)")
     
@@ -115,6 +117,8 @@ class CTRateDownloader:
     def analyze_data_distribution(self, df: pd.DataFrame) -> Dict:
         """Analyze the distribution of abnormalities in the dataset"""
         logger.info("Analyzing data distribution...")
+        logger.info("Prining df.columns")
+        logger.info(df.columns)
         
         # Calculate prevalence for each abnormality
         prevalences = {}
@@ -230,32 +234,39 @@ class CTRateDownloader:
         
         return train, val, test
     
-    def save_splits_and_metadata(self, train: pd.DataFrame, val: pd.DataFrame, 
-                                test: pd.DataFrame, stats: Dict):
-        """Save the data splits and metadata"""
+    def save_splits_and_metadata(self, train, val, test, stats):
         splits_dir = self.data_dir / "splits"
         splits_dir.mkdir(exist_ok=True)
-        
-        # Save splits
+
         train.to_csv(splits_dir / "train.csv", index=False)
         val.to_csv(splits_dir / "valid.csv", index=False)
         test.to_csv(splits_dir / "test.csv", index=False)
-        
-        # Save metadata and statistics
+
         with open(splits_dir / "dataset_stats.json", 'w') as f:
-            # Convert numpy types to native Python types for JSON serialization
             stats_serializable = {}
             for key, value in stats.items():
                 if isinstance(value, dict):
-                    stats_serializable[key] = {k: float(v) if isinstance(v, np.floating) 
-                                             else int(v) if isinstance(v, np.integer) 
-                                             else v for k, v in value.items()}
+                    # ensure both keys & values are JSON-safe
+                    stats_serializable[key] = {
+                        str(k): (
+                            float(v) if isinstance(v, np.floating) 
+                            else int(v) if isinstance(v, np.integer) 
+                            else v
+                        )
+                        for k, v in value.items()
+                    }
                 else:
-                    stats_serializable[key] = value
-            
+                    if isinstance(value, np.floating):
+                        stats_serializable[key] = float(value)
+                    elif isinstance(value, np.integer):
+                        stats_serializable[key] = int(value)
+                    else:
+                        stats_serializable[key] = value
+
             json.dump(stats_serializable, f, indent=2)
-        
+
         logger.info(f"Saved splits and metadata to {splits_dir}")
+
     
 
 
@@ -303,16 +314,20 @@ def main():
     downloader = CTRateDownloader(args.data_dir, args.max_storage_gb)
     
     # Step 1: Download metadata
-    df = downloader.download_metadata()
-    
+    meta_df = downloader.download_metadata()
+
     # Step 2: Download labels
     labels_df = downloader.download_labels()
-    
-    # Step 3: Analyze data distribution
+
+    # Step 3: Merge them on VolumeName
+    df = pd.merge(meta_df, labels_df, on=["VolumeName", "split"], how="inner")
+
+    # Step 4: Analyze data distribution
     stats = downloader.analyze_data_distribution(df)
-    
-    # Step 4: Perform stratified sampling
+
+    # Step 5: Perform stratified sampling
     sampled_df = downloader.stratified_sample(df)
+
     
     # Step 5: Create data splits
     train, val, test = downloader.create_data_splits(sampled_df)
