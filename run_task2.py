@@ -172,11 +172,11 @@ def main():
     parser.add_argument("--model", default="resnet50", 
                        choices=["resnet50", "resnet101", "efficientnet_b0"],
                        help="Model backbone")
-    parser.add_argument("--batch-size", type=int, default=5, 
+    parser.add_argument("--batch-size", type=int, default=32, 
                        help="Batch size")
     parser.add_argument("--learning-rate", type=float, default=1e-4, 
                        help="Learning rate")
-    parser.add_argument("--epochs", type=int, default=50, 
+    parser.add_argument("--epochs", type=int, default=100, 
                        help="Number of epochs")
     
     # Evaluation and Prediction
