@@ -20,22 +20,37 @@ from typing import Dict, List, Tuple
 from huggingface_hub import hf_hub_download, snapshot_download
 import time
 import shutil
+import gzip
+import lz4.frame
+import nibabel as nib
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class CTRateDownloader:
-    def __init__(self, data_dir: str = "./ct_rate_data", max_storage_gb: float = 80):
+    def __init__(self, data_dir: str = "./ct_rate_data", max_storage_gb: float = 80, use_compression: bool = True):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.max_storage_bytes = max_storage_gb * 1024**3
-        self.avg_ct_size_bytes = 300 * 1024**2  # Estimated 300MB per CT volume
+        self.use_compression = use_compression
+        
+        # With compression, we can fit ~3-5x more data
+        compression_factor = 4.0 if use_compression else 1.0
+        self.avg_ct_size_bytes = (300 * 1024**2) / compression_factor  # Compressed size
         self.max_samples = int(self.max_storage_bytes * 0.9 / self.avg_ct_size_bytes)  # 90% of storage
+        
         self.dataset_repo = "ibrahimhamamci/CT-RATE"
         self.base_url = "https://huggingface.co/datasets/ibrahimhamamci/CT-RATE/blob/main"
         self.output_dir = self.data_dir / "ct_rate_volumes"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Compression statistics
+        self.compression_stats = {
+            'original_size': 0,
+            'compressed_size': 0,
+            'compression_ratio': 0
+        }
 
         # 18 abnormalities
         self.abnormality_classes = [
@@ -48,8 +63,69 @@ class CTRateDownloader:
 
         
         logger.info(f"Initialized downloader for max {self.max_samples} samples (~{max_storage_gb}GB)")
+        logger.info(f"Compression enabled: {use_compression}")
     
-
+    def compress_nifti_volume(self, input_path: str, output_path: str) -> Tuple[int, int]:
+        """Compress NIfTI volume using LZ4 for optimal speed/compression balance"""
+        try:
+            # Load the NIfTI file
+            img = nib.load(input_path)
+            data = img.get_fdata().astype(np.float32)
+            
+            # Get original size
+            original_size = os.path.getsize(input_path)
+            
+            # Compress the data array using LZ4
+            compressed_data = lz4.frame.compress(data.tobytes())
+            
+            # Save compressed data with metadata
+            compressed_info = {
+                'data': compressed_data,
+                'shape': data.shape,
+                'header': img.header,
+                'affine': img.affine.tolist(),
+                'dtype': str(data.dtype)
+            }
+            
+            # Save to compressed format
+            with open(output_path + '.lz4', 'wb') as f:
+                import pickle
+                pickle.dump(compressed_info, f)
+            
+            compressed_size = os.path.getsize(output_path + '.lz4')
+            
+            # Update statistics
+            self.compression_stats['original_size'] += original_size
+            self.compression_stats['compressed_size'] += compressed_size
+            
+            logger.debug(f"Compressed {input_path}: {original_size//1024//1024}MB -> {compressed_size//1024//1024}MB "
+                        f"({compressed_size/original_size:.2f}x)")
+            
+            return original_size, compressed_size
+            
+        except Exception as e:
+            logger.error(f"Compression failed for {input_path}: {e}")
+            # Fallback to original file
+            shutil.copy2(input_path, output_path)
+            return 0, os.path.getsize(output_path)
+    
+    def decompress_nifti_volume(self, compressed_path: str) -> np.ndarray:
+        """Decompress LZ4 compressed NIfTI volume"""
+        try:
+            with open(compressed_path, 'rb') as f:
+                import pickle
+                compressed_info = pickle.load(f)
+            
+            # Decompress data
+            decompressed_bytes = lz4.frame.decompress(compressed_info['data'])
+            data = np.frombuffer(decompressed_bytes, dtype=compressed_info['dtype'])
+            data = data.reshape(compressed_info['shape'])
+            
+            return data.astype(np.float32)
+            
+        except Exception as e:
+            logger.error(f"Decompression failed for {compressed_path}: {e}")
+            return None
 
     def download_metadata(self) -> pd.DataFrame:
         """Download and merge train/val metadata"""
@@ -294,24 +370,36 @@ class CTRateDownloader:
                 final_path = os.path.join(self.output_dir, split, volume_name)
                 os.makedirs(os.path.dirname(final_path), exist_ok=True)
 
-                # Copy file from cache to output_dir
-                shutil.copy2(local_path, final_path)
-
-                print(f"✅ Downloaded: {final_path}")
+                # Apply compression if enabled
+                if self.use_compression:
+                    # Compress the file
+                    base_path = os.path.splitext(final_path)[0]  # Remove .gz extension
+                    original_size, compressed_size = self.compress_nifti_volume(local_path, base_path)
+                    print(f"✅ Downloaded & compressed: {base_path}.lz4 "
+                          f"({compressed_size//1024//1024}MB, {compressed_size/original_size:.2f}x compression)")
+                else:
+                    # Copy file from cache to output_dir
+                    shutil.copy2(local_path, final_path)
+                    print(f"✅ Downloaded: {final_path}")
 
             except Exception as e:
                 print(f"❌ Failed to download {repo_file_path}: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Download CT-RATE dataset with stratified sampling")
+    parser = argparse.ArgumentParser(description="Download CT-RATE dataset with stratified sampling and compression")
     parser.add_argument("--data-dir", default="./ct_rate_data", help="Data directory")
     parser.add_argument("--max-storage-gb", type=float, default=5, help="Maximum storage in GB")
     parser.add_argument("--download-volumes", action="store_true", help="Download actual CT volumes")
+    parser.add_argument("--use-compression", action="store_true", default=True, help="Use lossless compression to save space")
+    parser.add_argument("--no-compression", action="store_true", help="Disable compression")
     
     args = parser.parse_args()
     
+    # Handle compression flags
+    use_compression = args.use_compression and not args.no_compression
+    
     # Initialize downloader
-    downloader = CTRateDownloader(args.data_dir, args.max_storage_gb)
+    downloader = CTRateDownloader(args.data_dir, args.max_storage_gb, use_compression)
     
     # Step 1: Download metadata
     meta_df = downloader.download_metadata()
@@ -340,11 +428,24 @@ def main():
         downloader.download_ct_volumes(train, "train")
         downloader.download_ct_volumes(val, "valid")
     
-    logger.info("Dataset preparation complete!")
-    logger.info(f"Data saved to: {args.data_dir}")
-    logger.info(f"Train: {len(train)} samples")
-    logger.info(f"Val: {len(val)} samples") 
-    logger.info(f"Test: {len(test)} samples")
+    # Print compression statistics
+    if use_compression and args.download_volumes:
+        original_gb = downloader.compression_stats['original_size'] / (1024**3)
+        compressed_gb = downloader.compression_stats['compressed_size'] / (1024**3)
+        if original_gb > 0:
+            compression_ratio = original_gb / compressed_gb
+            saved_gb = original_gb - compressed_gb
+            logger.info("🗜️ Compression Statistics:")
+            logger.info(f"   Original size: {original_gb:.2f} GB")
+            logger.info(f"   Compressed size: {compressed_gb:.2f} GB")
+            logger.info(f"   Compression ratio: {compression_ratio:.2f}x")
+            logger.info(f"   Space saved: {saved_gb:.2f} GB ({(saved_gb/original_gb)*100:.1f}%)")
+    
+    logger.info("✅ Dataset preparation complete!")
+    logger.info(f"📂 Data saved to: {args.data_dir}")
+    logger.info(f"🚂 Train: {len(train)} samples")
+    logger.info(f"✅ Val: {len(val)} samples") 
+    logger.info(f"🧪 Test: {len(test)} samples")
 
 if __name__ == "__main__":
     main()

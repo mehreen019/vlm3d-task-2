@@ -16,9 +16,11 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict
 import argparse
 import logging
-from skimage import transform
+from skimage import transform, restoration, exposure, filters
 import cv2
 from scipy import ndimage
+import pickle
+import lz4.frame
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,41 +59,156 @@ class CTSliceExtractor:
                    f"{slices_per_volume} slices per volume")
     
     def load_ct_volume(self, ct_path: Path) -> Tuple[np.ndarray, Dict]:
-        """Load CT volume using nibabel (better for .nii.gz)"""
+        """Load CT volume - supports both compressed (.lz4) and uncompressed (.nii.gz) files"""
         try:
-            # Load with nibabel
-            img = nib.load(str(ct_path))
-            volume = img.get_fdata()
-            
-            # Ensure proper orientation (typically: sagittal, coronal, axial)
-            # For chest CT, we want axial slices (last dimension)
-            if len(volume.shape) == 3:
-                # Reorient if needed - typically we want axial as first dimension
-                # Standard nibabel loading gives (x, y, z), we want (z, y, x) for axial slices
-                volume = np.transpose(volume, (2, 1, 0))
-            
-            metadata = {
-                'original_shape': volume.shape,
-                'header': img.header,
-                'affine': img.affine,
-                'voxel_size': img.header.get_zooms() if hasattr(img.header, 'get_zooms') else None
-            }
-            
-            return volume.astype(np.float32), metadata
+            # Check if it's a compressed file
+            if str(ct_path).endswith('.lz4'):
+                return self.load_compressed_volume(ct_path)
+            else:
+                # Load with nibabel
+                img = nib.load(str(ct_path))
+                volume = img.get_fdata()
+                
+                # Ensure proper orientation (typically: sagittal, coronal, axial)
+                # For chest CT, we want axial slices (last dimension)
+                if len(volume.shape) == 3:
+                    # Reorient if needed - typically we want axial as first dimension
+                    # Standard nibabel loading gives (x, y, z), we want (z, y, x) for axial slices
+                    volume = np.transpose(volume, (2, 1, 0))
+                
+                metadata = {
+                    'original_shape': volume.shape,
+                    'header': img.header,
+                    'affine': img.affine,
+                    'voxel_size': img.header.get_zooms() if hasattr(img.header, 'get_zooms') else None
+                }
+                
+                return volume.astype(np.float32), metadata
         
         except Exception as e:
             logger.error(f"Failed to load {ct_path}: {e}")
             return None, None
     
+    def load_compressed_volume(self, compressed_path: Path) -> Tuple[np.ndarray, Dict]:
+        """Load LZ4 compressed CT volume"""
+        try:
+            with open(compressed_path, 'rb') as f:
+                compressed_info = pickle.load(f)
+            
+            # Decompress data
+            decompressed_bytes = lz4.frame.decompress(compressed_info['data'])
+            data = np.frombuffer(decompressed_bytes, dtype=compressed_info['dtype'])
+            volume = data.reshape(compressed_info['shape'])
+            
+            # Reorient for axial slices
+            if len(volume.shape) == 3:
+                volume = np.transpose(volume, (2, 1, 0))
+            
+            metadata = {
+                'original_shape': volume.shape,
+                'header': compressed_info.get('header'),
+                'affine': np.array(compressed_info.get('affine', np.eye(4))),
+                'voxel_size': None
+            }
+            
+            return volume.astype(np.float32), metadata
+            
+        except Exception as e:
+            logger.error(f"Failed to decompress {compressed_path}: {e}")
+            return None, None
+    
     def preprocess_volume(self, volume: np.ndarray) -> np.ndarray:
-        """Apply comprehensive CT preprocessing"""
-        # Apply HU windowing
-        volume = np.clip(volume, self.hu_window[0], self.hu_window[1])
+        """Apply advanced CT preprocessing with adaptive techniques"""
+        # 1. Adaptive HU windowing based on image content
+        volume = self.adaptive_hu_windowing(volume)
         
-        # Normalize to [0, 255] for better visualization and model compatibility
-        volume = ((volume - self.hu_window[0]) / (self.hu_window[1] - self.hu_window[0]) * 255)
+        # 2. Noise reduction while preserving edges
+        volume = self.denoise_volume(volume)
+        
+        # 3. Contrast enhancement
+        volume = self.enhance_contrast(volume)
+        
+        # 4. Final normalization to [0, 255]
+        volume = ((volume - volume.min()) / (volume.max() - volume.min() + 1e-8) * 255)
         
         return volume.astype(np.float32)
+    
+    def adaptive_hu_windowing(self, volume: np.ndarray) -> np.ndarray:
+        """Apply adaptive HU windowing based on volume statistics"""
+        # Calculate volume-specific percentiles for adaptive windowing
+        p1, p99 = np.percentile(volume, [1, 99])
+        
+        # Adjust window based on content
+        if p99 - p1 > 2000:  # High contrast volume
+            # Use wider window
+            hu_min = max(self.hu_window[0], p1 - 200)
+            hu_max = min(self.hu_window[1], p99 + 200)
+        else:  # Low contrast volume
+            # Use standard chest window
+            hu_min, hu_max = self.hu_window
+        
+        # Apply windowing
+        volume = np.clip(volume, hu_min, hu_max)
+        
+        return volume
+    
+    def denoise_volume(self, volume: np.ndarray) -> np.ndarray:
+        """Apply noise reduction while preserving important structures"""
+        # Apply non-local means denoising slice by slice for efficiency
+        denoised_volume = np.zeros_like(volume)
+        
+        for i in range(volume.shape[0]):
+            slice_2d = volume[i]
+            
+            # Skip empty slices
+            if np.std(slice_2d) < 1e-6:
+                denoised_volume[i] = slice_2d
+                continue
+            
+            # Normalize slice for denoising
+            slice_norm = (slice_2d - slice_2d.min()) / (slice_2d.max() - slice_2d.min() + 1e-8)
+            
+            # Apply non-local means denoising (preserves textures better than Gaussian)
+            try:
+                denoised_slice = restoration.denoise_nl_means(
+                    slice_norm, 
+                    patch_size=5, 
+                    patch_distance=6,
+                    h=0.1 * np.std(slice_norm),
+                    fast_mode=True
+                )
+                # Rescale back
+                denoised_volume[i] = denoised_slice * (slice_2d.max() - slice_2d.min()) + slice_2d.min()
+            except:
+                # Fallback to original slice if denoising fails
+                denoised_volume[i] = slice_2d
+        
+        return denoised_volume
+    
+    def enhance_contrast(self, volume: np.ndarray) -> np.ndarray:
+        """Apply contrast enhancement techniques"""
+        enhanced_volume = np.zeros_like(volume)
+        
+        for i in range(volume.shape[0]):
+            slice_2d = volume[i]
+            
+            # Skip empty slices
+            if np.std(slice_2d) < 1e-6:
+                enhanced_volume[i] = slice_2d
+                continue
+            
+            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            # Convert to uint16 for CLAHE
+            slice_uint16 = ((slice_2d - slice_2d.min()) / (slice_2d.max() - slice_2d.min() + 1e-8) * 65535).astype(np.uint16)
+            
+            # Apply CLAHE
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            enhanced_slice = clahe.apply(slice_uint16)
+            
+            # Convert back to float
+            enhanced_volume[i] = enhanced_slice.astype(np.float32)
+        
+        return enhanced_volume
     
     def find_chest_region(self, volume: np.ndarray) -> Tuple[int, int]:
         """Find the chest region with improved anatomical detection"""
@@ -272,21 +389,20 @@ class CTSliceExtractor:
         # Build the actual file path based on your downloader structure
         split = volume_data['split']  # 'train' or 'valid'
         
-        # Your downloader saves files as: ct_rate_volumes/{split}/{volume_name}
-        ct_path = self.data_dir / "ct_rate_volumes" / split / volume_name
-        ct_path = Path(ct_path).absolute()
-
-        ct_path = Path(str(ct_path))  # force to string first
-        print("Checking:", ct_path)
-        print("Absolute:", ct_path.absolute())
-        print("Exists:", ct_path.exists())
-        print("Is file:", ct_path.is_file())
+        # Check for both compressed and uncompressed files
+        base_path = self.data_dir / "ct_rate_volumes" / split / volume_name
+        base_path = Path(base_path).absolute()
         
-
-        print("Looking for:", ct_path.absolute(), " also known as: ", ct_path)
-        
-        if not ct_path.absolute().exists():
-            logger.warning(f"CT file not found: {ct_path.absolute()}")
+        # Try compressed file first (.lz4), then uncompressed (.nii.gz)
+        ct_path = None
+        if Path(str(base_path) + '.lz4').exists():
+            ct_path = Path(str(base_path) + '.lz4')
+            logger.debug(f"Found compressed file: {ct_path}")
+        elif base_path.exists():
+            ct_path = base_path
+            logger.debug(f"Found uncompressed file: {ct_path}")
+        else:
+            logger.warning(f"CT file not found (tried both {base_path} and {base_path}.lz4)")
             return []
         
         # Load volume
