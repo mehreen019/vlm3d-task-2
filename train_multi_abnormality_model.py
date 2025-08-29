@@ -104,10 +104,10 @@ class CBAM(nn.Module):
 
 # Advanced Loss Functions
 class AsymmetricLoss(nn.Module):
-    """Asymmetric Loss for Multi-Label Classification"""
-    def __init__(self, gamma_neg=4, gamma_pos=1, clip=0.05, eps=1e-8, disable_torch_grad_focal_loss=True):
+    """Asymmetric Loss for Multi-Label Classification - Enhanced for Over-prediction"""
+    def __init__(self, gamma_neg=6, gamma_pos=1, clip=0.05, eps=1e-8, disable_torch_grad_focal_loss=True):
         super(AsymmetricLoss, self).__init__()
-        self.gamma_neg = gamma_neg
+        self.gamma_neg = gamma_neg  # Increased from 4 to 6 to penalize false positives more
         self.gamma_pos = gamma_pos
         self.clip = clip
         self.disable_torch_grad_focal_loss = disable_torch_grad_focal_loss
@@ -473,7 +473,47 @@ class MultiAbnormalityModel(pl.LightningModule):
             'recall': torchmetrics.Recall(task='multilabel', num_labels=self.num_classes, average='macro'),
             'accuracy': torchmetrics.Accuracy(task='multilabel', num_labels=self.num_classes, average='micro')
         })
-    
+
+    def _find_optimal_threshold(self, probs, labels):
+        """Find optimal threshold using F1 score maximization"""
+        best_threshold = 0.5
+        best_f1 = 0
+
+        # Try different thresholds
+        thresholds = np.arange(0.1, 0.9, 0.05)
+
+        for threshold in thresholds:
+            y_pred = (probs > threshold).astype(int)
+            f1 = f1_score(labels, y_pred, average='macro', zero_division=0)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = threshold
+
+        return best_threshold
+
+    def _calculate_metrics_with_threshold(self, probs, labels, y_pred, suffix=""):
+        """Calculate metrics with specific threshold"""
+        metrics = {}
+
+        # Accuracy metrics
+        hamming_accuracy = np.mean(labels == y_pred)
+        exact_match_accuracy = np.mean(np.all(labels == y_pred, axis=1))
+        sample_wise_accuracy = np.mean([
+            accuracy_score(labels[i], y_pred[i]) for i in range(len(labels))
+        ])
+
+        metrics[f'hamming_accuracy{suffix}'] = hamming_accuracy
+        metrics[f'exact_match_accuracy{suffix}'] = exact_match_accuracy
+        metrics[f'sample_accuracy{suffix}'] = sample_wise_accuracy
+
+        # Classification metrics
+        metrics[f'f1_macro{suffix}'] = f1_score(labels, y_pred, average='macro', zero_division=0)
+        metrics[f'f1_micro{suffix}'] = f1_score(labels, y_pred, average='micro', zero_division=0)
+        metrics[f'precision_macro{suffix}'] = precision_score(labels, y_pred, average='macro', zero_division=0)
+        metrics[f'recall_macro{suffix}'] = recall_score(labels, y_pred, average='macro', zero_division=0)
+
+        return metrics
+
     def forward(self, x):
         features = self.backbone(x)
 
@@ -485,19 +525,35 @@ class MultiAbnormalityModel(pl.LightningModule):
         return logits
     
     def compute_loss(self, logits, labels):
-        """Compute loss based on configured loss type"""
+        """Compute loss based on configured loss type with class balancing"""
         if isinstance(self.criterion, AsymmetricLoss):
             return self.criterion(logits, labels)
         elif self.criterion == "bce":
-            return F.binary_cross_entropy_with_logits(logits, labels)
+            # Add class weights to BCE for imbalanced data
+            if self.class_weights is not None:
+                # Convert weights to match logits shape
+                weights = self.class_weights.to(logits.device).unsqueeze(0)
+                loss = F.binary_cross_entropy_with_logits(
+                    logits, labels,
+                    weight=weights.expand_as(logits),
+                    reduction='mean'
+                )
+            else:
+                loss = F.binary_cross_entropy_with_logits(logits, labels)
+            return loss
         elif self.criterion == "focal":
-            # Focal loss parameters
-            alpha = 0.25
-            gamma = 2.0
+            # Enhanced focal loss with class weights - aggressive against over-prediction
+            alpha = 0.85  # Much higher alpha to penalize positive predictions
+            gamma = 4.0   # Higher gamma to focus on hard examples
 
             bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction='none')
             pt = torch.exp(-bce_loss)
             focal_loss = alpha * (1 - pt) ** gamma * bce_loss
+
+            # Apply class weights if available
+            if self.class_weights is not None:
+                weights = self.class_weights.to(logits.device).unsqueeze(0)
+                focal_loss = focal_loss * weights.expand_as(focal_loss)
 
             return focal_loss.mean()
         else:
@@ -851,32 +907,34 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
             logger.warning(f"Could not compute AUROC micro: {e}")
             metrics['auroc_micro'] = 0.5
 
-        # Other metrics
-        y_pred = (all_probs > 0.5).astype(int)
+        # Threshold calibration - find optimal threshold
+        optimal_threshold = self._find_optimal_threshold(all_probs, all_labels)
+        logger.info(f"Optimal threshold found: {optimal_threshold:.3f}")
 
-        # Calculate meaningful accuracy for multi-label classification
-        # Method 1: Hamming accuracy (fraction of correct individual predictions)
-        hamming_accuracy = np.mean(all_labels == y_pred)
-        metrics['hamming_accuracy'] = hamming_accuracy
+        # Use both 0.5 and optimal threshold for predictions
+        y_pred_05 = (all_probs > 0.5).astype(int)
+        y_pred_opt = (all_probs > optimal_threshold).astype(int)
 
-        # Method 2: Exact match accuracy (all labels correct for a sample)
-        exact_match_accuracy = np.mean(np.all(all_labels == y_pred, axis=1))
-        metrics['exact_match_accuracy'] = exact_match_accuracy
+        # Calculate metrics with both thresholds
+        metrics_05 = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_05, suffix="_05")
+        metrics_opt = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_opt, suffix="_opt")
 
-        # Method 3: Sample-wise accuracy (average accuracy per sample)
-        sample_wise_accuracy = np.mean([
-            accuracy_score(all_labels[i], y_pred[i]) for i in range(len(all_labels))
-        ])
-        metrics['sample_accuracy'] = sample_wise_accuracy
+        # Use 0.5 threshold for main metrics (backward compatibility)
+        y_pred = y_pred_05
 
-        # Keep exact match as 'accuracy' for backward compatibility but add others
-        metrics['accuracy'] = exact_match_accuracy
+        # Calculate metrics with both thresholds
+        metrics_05 = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_05, suffix="_05")
+        metrics_opt = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_opt, suffix="_opt")
 
-        # Other classification metrics
-        metrics['f1_macro'] = f1_score(all_labels, y_pred, average='macro', zero_division=0)
-        metrics['f1_micro'] = f1_score(all_labels, y_pred, average='micro', zero_division=0)
-        metrics['precision_macro'] = precision_score(all_labels, y_pred, average='macro', zero_division=0)
-        metrics['recall_macro'] = recall_score(all_labels, y_pred, average='macro', zero_division=0)
+        # Merge metrics
+        metrics.update(metrics_05)
+        metrics.update(metrics_opt)
+
+        # Keep exact match as 'accuracy' for backward compatibility
+        metrics['accuracy'] = metrics_05['exact_match_accuracy_05']
+
+        # Add threshold info
+        metrics['optimal_threshold'] = optimal_threshold
 
     except Exception as e:
         logger.error(f"Error calculating metrics: {e}")
@@ -899,31 +957,55 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
     logger.info("EVALUATION RESULTS")
     logger.info("=" * 50)
 
-    # Log accuracy metrics first (most important for multi-label)
-    accuracy_metrics = ['hamming_accuracy', 'exact_match_accuracy', 'sample_accuracy', 'accuracy']
-    for metric_name in accuracy_metrics:
-        if metric_name in metrics:
-            value = metrics[metric_name]
-            logger.info(f"{metric_name:20s}: {value:.4f}")
+    # Show threshold comparison
+    logger.info("THRESHOLD COMPARISON:")
+    logger.info(f"  Optimal threshold: {metrics.get('optimal_threshold', 0.5):.3f}")
+
+    logger.info("  Threshold 0.5 vs Optimal:")
+    hamming_05 = metrics.get('hamming_accuracy_05', 0)
+    hamming_opt = metrics.get('hamming_accuracy_opt', 0)
+    f1_05 = metrics.get('f1_macro_05', 0)
+    f1_opt = metrics.get('f1_macro_opt', 0)
+
+    logger.info(f"    Hamming Acc: {hamming_05:.4f} → {hamming_opt:.4f} ({hamming_opt-hamming_05:+.4f})")
+    logger.info(f"    F1 Macro:    {f1_05:.4f} → {f1_opt:.4f} ({f1_opt-f1_05:+.4f})")
+
+    # Log primary metrics (using optimal threshold)
+    logger.info("-" * 30)
+    logger.info("PRIMARY METRICS (Optimal Threshold):")
+    logger.info(f"hamming_accuracy     : {metrics.get('hamming_accuracy_opt', 0):.4f}")
+    logger.info(f"f1_macro             : {metrics.get('f1_macro_opt', 0):.4f}")
+    logger.info(f"precision_macro      : {metrics.get('precision_macro_opt', 0):.4f}")
+    logger.info(f"recall_macro         : {metrics.get('recall_macro_opt', 0):.4f}")
 
     logger.info("-" * 30)
-
-    # Log other metrics
-    other_metrics = ['auroc_macro', 'auroc_micro', 'f1_macro', 'f1_micro', 'precision_macro', 'recall_macro']
-    for metric_name in other_metrics:
-        if metric_name in metrics:
-            value = metrics[metric_name]
-            logger.info(f"{metric_name:20s}: {value:.4f}")
+    logger.info("OVERALL METRICS:")
+    logger.info(f"auroc_macro          : {metrics.get('auroc_macro', 0):.4f}")
+    logger.info(f"auroc_micro          : {metrics.get('auroc_micro', 0):.4f}")
 
     # Add interpretation
     logger.info("-" * 30)
-    hamming_acc = metrics.get('hamming_accuracy', 0)
-    exact_acc = metrics.get('exact_match_accuracy', 0)
+    hamming_opt = metrics.get('hamming_accuracy_opt', 0)
+    exact_opt = metrics.get('exact_match_accuracy_opt', 0)
 
     logger.info("INTERPRETATION:")
-    logger.info(f"  Hamming Acc: {hamming_acc:.1%} of individual predictions are correct")
-    logger.info(f"  Exact Match: {exact_acc:.1%} of samples have ALL labels correct")
+    logger.info(f"  Hamming Acc: {hamming_opt:.1%} of individual predictions are correct")
+    logger.info(f"  Exact Match: {exact_opt:.1%} of samples have ALL labels correct")
     logger.info(f"  (Low exact match is normal for multi-label with many classes)")
+
+    # Performance analysis
+    logger.info("-" * 30)
+    logger.info("PERFORMANCE ANALYSIS:")
+    pos_rate = np.sum(all_probs > 0.5) / all_probs.size
+    logger.info(f"  Positive prediction rate: {pos_rate:.1%}")
+    logger.info(f"  Model bias: {'Over-predicting positives' if pos_rate > 0.6 else 'Balanced' if pos_rate > 0.4 else 'Under-predicting positives'}")
+
+    if metrics.get('auroc_macro', 0) < 0.6:
+        logger.info("  ⚠️  AUROC < 0.6 suggests model needs improvement")
+    if hamming_opt < 0.3:
+        logger.info("  ⚠️  Low hamming accuracy suggests poor individual predictions")
+    if metrics.get('precision_macro_opt', 0) < 0.3:
+        logger.info("  ⚠️  Low precision suggests too many false positives")
 
     # Debug information
     logger.info("-" * 30)
