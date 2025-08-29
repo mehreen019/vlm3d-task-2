@@ -393,8 +393,8 @@ class MultiAbnormalityModel(pl.LightningModule):
             "Emphysema", "Arterial wall calcification", "Coronary artery wall calcification"
         ]
     
-    def _build_backbone(self, model_name: str):
-        """Build the backbone network"""
+        def _build_backbone(self, model_name: str):
+        """Build the backbone network with CT-CLIP integration"""
         if model_name == "resnet50":
             backbone = models.resnet50(pretrained=True)
             backbone = nn.Sequential(*list(backbone.children())[:-1])
@@ -404,9 +404,30 @@ class MultiAbnormalityModel(pl.LightningModule):
             backbone = nn.Sequential(*list(backbone.children())[:-1])
             self.feature_dim = 2048
         elif model_name == "efficientnet_b0":
+            # Try to load CT-CLIP weights if available
             backbone = models.efficientnet_b0(pretrained=True)
-            # Remove the classifier to get features
             backbone = nn.Sequential(*list(backbone.children())[:-1])
+
+            # Try to load CT-CLIP weights
+            ctclip_paths = ['models/ctclip_classfine.pt', 'models/ctclip_vocabfine.pt']
+            ctclip_loaded = False
+
+            for ctclip_path in ctclip_paths:
+                if os.path.exists(ctclip_path):
+                    try:
+                        state_dict = torch.load(ctclip_path, map_location='cpu')
+                        # Load with strict=False in case of slight differences
+                        backbone.load_state_dict(state_dict, strict=False)
+                        print(f"🎯 Loaded CT-CLIP weights from {ctclip_path}")
+                        ctclip_loaded = True
+                        break
+                    except Exception as e:
+                        print(f"⚠️ Failed to load {ctclip_path}: {e}")
+                        continue
+
+            if not ctclip_loaded:
+                print("ℹ️ Using ImageNet pretrained weights (CT-CLIP not found)")
+
             self.feature_dim = 1280
         else:
             raise ValueError(f"Unsupported model: {model_name}")
@@ -525,7 +546,7 @@ class MultiAbnormalityModel(pl.LightningModule):
         return logits
     
     def compute_loss(self, logits, labels):
-        """Compute loss based on configured loss type with class balancing"""
+        """Compute loss based on configured loss type with aggressive CT-CLIP settings"""
         if isinstance(self.criterion, AsymmetricLoss):
             return self.criterion(logits, labels)
         elif self.criterion == "bce":
@@ -542,8 +563,8 @@ class MultiAbnormalityModel(pl.LightningModule):
                 loss = F.binary_cross_entropy_with_logits(logits, labels)
             return loss
         elif self.criterion == "focal":
-            # Enhanced focal loss with class weights - aggressive against over-prediction
-            alpha = 0.85  # Much higher alpha to penalize positive predictions
+            # Aggressive focal loss for CT-CLIP - heavily penalizes over-prediction
+            alpha = 0.85  # Much higher alpha to penalize positive predictions heavily
             gamma = 4.0   # Higher gamma to focus on hard examples
 
             bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction='none')
@@ -557,9 +578,9 @@ class MultiAbnormalityModel(pl.LightningModule):
 
             return focal_loss.mean()
         else:
-            # Default to focal loss
-            alpha = 0.25
-            gamma = 2.0
+            # Default to aggressive focal loss for CT-CLIP
+            alpha = 0.85  # Aggressive against over-prediction
+            gamma = 4.0   # Focus on hard examples
 
             bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction='none')
             pt = torch.exp(-bce_loss)

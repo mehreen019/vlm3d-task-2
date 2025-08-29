@@ -101,6 +101,11 @@ pip install torchmetrics  # Comprehensive metrics
 pip install scikit-multilearn  # Multi-label utilities
 pip install imbalanced-learn  # Class imbalance handling
 
+# Install CT-CLIP specific dependencies
+echo "🩻 Installing CT-CLIP integration dependencies..."
+pip install urllib3  # For model downloads
+pip install --upgrade timm  # Ensure latest timm for CT-CLIP compatibility
+
 echo "✅ Environment setup complete!"
 echo ""
 echo "📋 Summary of installed packages:"
