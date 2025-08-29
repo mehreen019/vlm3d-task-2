@@ -19,7 +19,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Learning
 from pytorch_lightning.loggers import TensorBoardLogger
 import torchmetrics
 from sklearn.metrics import (
-    roc_auc_score, f1_score, precision_score, recall_score, 
+    roc_auc_score, f1_score, precision_score, recall_score,
     accuracy_score, average_precision_score, classification_report
 )
 from sklearn.model_selection import train_test_split
@@ -31,26 +31,173 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict, Counter
 import warnings
+import random
 warnings.filterwarnings('ignore')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Advanced Attention Mechanisms
+class SEBlock(nn.Module):
+    """Squeeze-and-Excitation Block"""
+    def __init__(self, channels, reduction=16):
+        super(SEBlock, self).__init__()
+        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        self.excitation = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.squeeze(x).view(b, c)
+        y = self.excitation(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
+
+class CBAM(nn.Module):
+    """Convolutional Block Attention Module"""
+    def __init__(self, channels, reduction=16, kernel_size=7):
+        super(CBAM, self).__init__()
+
+        # Channel attention
+        self.channel_attention = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // reduction, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, 1, bias=False)
+        )
+
+        # Spatial attention
+        self.spatial_attention = nn.Sequential(
+            nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # Channel attention
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        ca_input = torch.cat([avg_out, max_out], dim=1)
+
+        ca = self.channel_attention(ca_input)
+        ca = ca + torch.sigmoid(ca)
+
+        x = x * ca
+
+        # Spatial attention
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        sa_input = torch.cat([avg_out, max_out], dim=1)
+
+        sa = self.spatial_attention(sa_input)
+        x = x * sa
+
+        return x
+
+# Advanced Loss Functions
+class AsymmetricLoss(nn.Module):
+    """Asymmetric Loss for Multi-Label Classification"""
+    def __init__(self, gamma_neg=4, gamma_pos=1, clip=0.05, eps=1e-8, disable_torch_grad_focal_loss=True):
+        super(AsymmetricLoss, self).__init__()
+        self.gamma_neg = gamma_neg
+        self.gamma_pos = gamma_pos
+        self.clip = clip
+        self.disable_torch_grad_focal_loss = disable_torch_grad_focal_loss
+        self.eps = eps
+
+    def forward(self, x, y):
+        """"
+        Parameters
+        ----------
+        x: input logits
+        y: targets (multi-label binarized vector)
+        """
+        x_sigmoid = torch.sigmoid(x)
+        xs_pos = x_sigmoid
+        xs_neg = 1 - x_sigmoid
+
+        if self.clip > 0:
+            xs_neg = (xs_neg + self.clip).clamp(max=1)
+
+        # Basic CE calculation
+        los_pos = y * torch.log(xs_pos.clamp(min=self.eps))
+        los_neg = (1 - y) * torch.log(xs_neg.clamp(min=self.eps))
+
+        # Asymmetric Focusing
+        if self.gamma_neg > 0 or self.gamma_pos > 0:
+            if self.disable_torch_grad_focal_loss:
+                torch.set_grad_enabled(False)
+            pt0 = xs_pos * y
+            pt1 = xs_neg * (1 - y)
+            pt = pt0 + pt1
+            one_sided_gamma = self.gamma_pos * y + self.gamma_neg * (1 - y)
+            one_sided_w = torch.pow(1 - pt, one_sided_gamma)
+            if self.disable_torch_grad_focal_loss:
+                torch.set_grad_enabled(True)
+            los_pos *= one_sided_w
+            los_neg *= one_sided_w
+
+        loss = los_pos + los_neg
+        return -loss.sum()
+
+# Data Augmentation Functions
+def cutmix_data(x, y, alpha=1.0):
+    """CutMix augmentation for multi-label classification"""
+    batch_size = x.size(0)
+    indices = torch.randperm(batch_size)
+
+    lam = np.random.beta(alpha, alpha)
+    lam = max(lam, 1 - lam)
+
+    # Random box
+    bbx1, bby1, bbx2, bby2 = rand_bbox(x.size(), lam)
+    x[:, :, bbx1:bbx2, bby1:bby2] = x[indices, :, bbx1:bbx2, bby1:bby2]
+
+    # Adjust lambda to match pixel ratio
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (x.size()[-1] * x.size()[-2]))
+
+    return x, y, y[indices], lam
+
+def rand_bbox(size, lam):
+    """Generate random bounding box"""
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = np.int32(W * cut_rat)
+    cut_h = np.int32(H * cut_rat)
+
+    # uniform
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
 class CTSliceDataset(Dataset):
     """Dataset for loading CT slices with multi-label abnormalities"""
     
-    def __init__(self, 
+    def __init__(self,
                  slice_df: pd.DataFrame,
                  data_root: str,
                  multi_abnormality_df: pd.DataFrame = None,
                  transform=None,
-                 augment: bool = False):
+                 augment: bool = False,
+                 use_advanced_aug: bool = False,
+                 cutmix_prob: float = 0.5):
         
         self.slice_df = slice_df.copy()
         self.data_root = Path(data_root)
         self.transform = transform
         self.augment = augment
-        
+        self.use_advanced_aug = use_advanced_aug
+        self.cutmix_prob = cutmix_prob
+
         # 18 abnormality classes from CT-RATE
         self.abnormality_classes = [
             "Cardiomegaly", "Hiatal hernia", "Atelectasis", "Pulmonary fibrotic sequela",
@@ -186,13 +333,19 @@ class CTSliceDataset(Dataset):
 class MultiAbnormalityModel(pl.LightningModule):
     """Multi-label classification model for abnormality detection"""
     
-    def __init__(self, 
+    def __init__(self,
                  model_name: str = "resnet50",
                  num_classes: int = 18,
                  learning_rate: float = 1e-4,
                  weight_decay: float = 1e-5,
                  class_weights: torch.Tensor = None,
-                 dropout_rate: float = 0.3):
+                 dropout_rate: float = 0.3,
+                 freeze_backbone: bool = False,
+                 use_attention: str = "none",  # "none", "se", "cbam"
+                 use_multiscale: bool = False,
+                 loss_type: str = "focal",  # "focal", "bce", "asl"
+                 progressive_unfreeze: bool = False,
+                 unfreeze_epoch: int = 10):
         
         super().__init__()
         self.save_hyperparameters()
@@ -201,10 +354,25 @@ class MultiAbnormalityModel(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.class_weights = class_weights
-        
-        # Build model
+        self.freeze_backbone = freeze_backbone
+        self.use_attention = use_attention
+        self.use_multiscale = use_multiscale
+        self.loss_type = loss_type
+        self.progressive_unfreeze = progressive_unfreeze
+        self.unfreeze_epoch = unfreeze_epoch
+        self.current_epoch_num = 0
+
+        # Build model components
         self.backbone = self._build_backbone(model_name)
+        self.attention = self._build_attention(use_attention)
         self.classifier = self._build_classifier(dropout_rate)
+
+        # Initialize loss function
+        self.criterion = self._build_loss_function(loss_type)
+
+        # Apply backbone freezing if requested
+        if freeze_backbone and not progressive_unfreeze:
+            self._freeze_backbone()
         
         # Metrics
         self.train_metrics = self._create_metrics('train')
@@ -250,7 +418,47 @@ class MultiAbnormalityModel(pl.LightningModule):
             nn.Dropout(dropout_rate / 2),
             nn.Linear(512, self.num_classes)
         )
-    
+
+    def _build_attention(self, attention_type: str):
+        """Build attention mechanism"""
+        if attention_type == "se":
+            return SEBlock(self.feature_dim)
+        elif attention_type == "cbam":
+            return CBAM(self.feature_dim)
+        else:
+            return nn.Identity()
+
+    def _build_loss_function(self, loss_type: str):
+        """Build loss function based on type"""
+        if loss_type == "focal":
+            return "focal"  # We'll handle this in compute_loss
+        elif loss_type == "bce":
+            return "bce"
+        elif loss_type == "asl":
+            return AsymmetricLoss(gamma_neg=4, gamma_pos=1, clip=0.05)
+        else:
+            return "focal"
+
+    def _freeze_backbone(self):
+        """Freeze backbone parameters"""
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        logger.info("Backbone frozen")
+
+    def _unfreeze_backbone(self):
+        """Unfreeze backbone parameters"""
+        for param in self.backbone.parameters():
+            param.requires_grad = True
+        logger.info("Backbone unfrozen")
+
+    def on_train_epoch_start(self):
+        """Handle progressive unfreezing"""
+        self.current_epoch_num += 1
+
+        if self.progressive_unfreeze and self.current_epoch_num == self.unfreeze_epoch:
+            self._unfreeze_backbone()
+            logger.info(f"Backbone unfrozen at epoch {self.current_epoch_num}")
+
     def _create_metrics(self, prefix: str):
         """Create torchmetrics for evaluation"""
         return nn.ModuleDict({
@@ -263,20 +471,40 @@ class MultiAbnormalityModel(pl.LightningModule):
     
     def forward(self, x):
         features = self.backbone(x)
+
+        # Apply attention if enabled
+        if hasattr(self, 'attention') and self.attention is not None:
+            features = self.attention(features)
+
         logits = self.classifier(features)
         return logits
     
     def compute_loss(self, logits, labels):
-        """Compute focal loss for class imbalance"""
-        # Focal loss parameters
-        alpha = 0.25
-        gamma = 2.0
-        
-        bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction='none')
-        pt = torch.exp(-bce_loss)
-        focal_loss = alpha * (1 - pt) ** gamma * bce_loss
-        
-        return focal_loss.mean()
+        """Compute loss based on configured loss type"""
+        if isinstance(self.criterion, AsymmetricLoss):
+            return self.criterion(logits, labels)
+        elif self.criterion == "bce":
+            return F.binary_cross_entropy_with_logits(logits, labels)
+        elif self.criterion == "focal":
+            # Focal loss parameters
+            alpha = 0.25
+            gamma = 2.0
+
+            bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction='none')
+            pt = torch.exp(-bce_loss)
+            focal_loss = alpha * (1 - pt) ** gamma * bce_loss
+
+            return focal_loss.mean()
+        else:
+            # Default to focal loss
+            alpha = 0.25
+            gamma = 2.0
+
+            bce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction='none')
+            pt = torch.exp(-bce_loss)
+            focal_loss = alpha * (1 - pt) ** gamma * bce_loss
+
+            return focal_loss.mean()
     
     def training_step(self, batch, batch_idx):
         images = batch['image']
@@ -400,8 +628,9 @@ def load_data(data_dir: str = "./ct_rate_data", slice_dir: str = "./ct_rate_2d")
     
     return train_slices_df, val_slices_df, multi_labels_df
 
-def create_data_loaders(train_slices_df, val_slices_df, multi_labels_df, 
-                       slice_dir: str, batch_size: int = 32, num_workers: int = 4):
+def create_data_loaders(train_slices_df, val_slices_df, multi_labels_df,
+                       slice_dir: str, batch_size: int = 32, num_workers: int = 4,
+                       use_advanced_aug: bool = False, cutmix_prob: float = 0.5):
     """Create data loaders"""
     
     # Transforms
@@ -414,15 +643,19 @@ def create_data_loaders(train_slices_df, val_slices_df, multi_labels_df,
         data_root=slice_dir,
         multi_abnormality_df=multi_labels_df,
         transform=train_transform,
-        augment=True
+        augment=True,
+        use_advanced_aug=use_advanced_aug,
+        cutmix_prob=cutmix_prob
     )
-    
+
     val_dataset = CTSliceDataset(
         slice_df=val_slices_df,
         data_root=slice_dir,
         multi_abnormality_df=multi_labels_df,
         transform=val_transform,
-        augment=False
+        augment=False,
+        use_advanced_aug=False,  # No augmentation for validation
+        cutmix_prob=0.0
     )
     
     # Data loaders
@@ -458,8 +691,10 @@ def train_model(args):
     
     # Create data loaders
     train_loader, val_loader, class_weights = create_data_loaders(
-        train_slices_df, val_slices_df, multi_labels_df, 
-        args.slice_dir, args.batch_size, args.num_workers
+        train_slices_df, val_slices_df, multi_labels_df,
+        args.slice_dir, args.batch_size, args.num_workers,
+        use_advanced_aug=getattr(args, 'use_advanced_aug', False),
+        cutmix_prob=getattr(args, 'cutmix_prob', 0.5)
     )
     
     # Initialize model
@@ -469,7 +704,13 @@ def train_model(args):
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         class_weights=class_weights,
-        dropout_rate=args.dropout_rate
+        dropout_rate=args.dropout_rate,
+        freeze_backbone=getattr(args, 'freeze_backbone', False),
+        use_attention=getattr(args, 'use_attention', 'none'),
+        use_multiscale=getattr(args, 'use_multiscale', False),
+        loss_type=getattr(args, 'loss_type', 'focal'),
+        progressive_unfreeze=getattr(args, 'progressive_unfreeze', False),
+        unfreeze_epoch=getattr(args, 'unfreeze_epoch', 10)
     )
     
     # Callbacks
@@ -613,6 +854,24 @@ def main():
     # Model arguments
     parser.add_argument("--model-name", default="resnet50", choices=["resnet50", "resnet101", "efficientnet_b0"])
     parser.add_argument("--dropout-rate", type=float, default=0.3)
+
+    # Advanced model arguments
+    parser.add_argument("--freeze-backbone", action="store_true", help="Freeze backbone layers")
+    parser.add_argument("--use-attention", choices=["none", "se", "cbam"], default="none",
+                       help="Attention mechanism to use")
+    parser.add_argument("--use-multiscale", action="store_true", help="Use multi-scale features")
+    parser.add_argument("--loss-type", choices=["focal", "bce", "asl"], default="focal",
+                       help="Loss function type")
+    parser.add_argument("--progressive-unfreeze", action="store_true",
+                       help="Use progressive unfreezing of backbone")
+    parser.add_argument("--unfreeze-epoch", type=int, default=10,
+                       help="Epoch to unfreeze backbone in progressive unfreezing")
+
+    # Advanced augmentation arguments
+    parser.add_argument("--use-advanced-aug", action="store_true",
+                       help="Use advanced augmentations (CutMix, etc.)")
+    parser.add_argument("--cutmix-prob", type=float, default=0.5,
+                       help="Probability of applying CutMix augmentation")
     
     # Training arguments
     parser.add_argument("--batch-size", type=int, default=32)
