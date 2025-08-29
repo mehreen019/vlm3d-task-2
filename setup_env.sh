@@ -102,27 +102,17 @@ pip install scikit-multilearn  # Multi-label utilities
 pip install imbalanced-learn  # Class imbalance handling
 
 echo "🔧 Installing enhanced libraries..."
-pip install torch
-pip install torchvision
-pip install pytorch-lightning
-pip install torchmetrics
-pip install scikit-multilearn  # Multi-label utilities
 
-pip install numpy
-pip install pandas
 pip install opencv-python
 pip install pillow
 pip install nibabel
 pip install scikit-image
-pip install scipy
+
 
 pip install lz4
-pip install matplotlib
+
 pip install tensorboard
 pip install tqdm
-pip install scikit-learn
-pip install huggingface-hub
-
 
 # For enhanced features
 pip install timm
