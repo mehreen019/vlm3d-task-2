@@ -231,11 +231,12 @@ class MultiAbnormalityModel(pl.LightningModule):
             self.feature_dim = 2048
         elif model_name == "efficientnet_b0":
             backbone = models.efficientnet_b0(pretrained=True)
-            backbone.classifier = nn.Identity()
+            # Remove the classifier to get features
+            backbone = nn.Sequential(*list(backbone.children())[:-1])
             self.feature_dim = 1280
         else:
             raise ValueError(f"Unsupported model: {model_name}")
-        
+
         return backbone
     
     def _build_classifier(self, dropout_rate: float):
