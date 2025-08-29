@@ -811,7 +811,15 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
     
     all_probs = np.vstack(all_probs)
     all_labels = np.vstack(all_labels)
-    
+
+    # Quick sanity check of predictions
+    logger.info("PREDICTION ANALYSIS:")
+    logger.info(f"  Prediction range: [{all_probs.min():.4f}, {all_probs.max():.4f}]")
+    logger.info(f"  Predictions > 0.5: {np.sum(all_probs > 0.5)}/{all_probs.size} ({100*np.sum(all_probs > 0.5)/all_probs.size:.1f}%)")
+    logger.info(f"  All predictions == 0: {np.all(all_probs == 0)}")
+    logger.info(f"  All predictions == 1: {np.all(all_probs == 1)}")
+    logger.info(f"  Label distribution: {all_labels.sum(axis=0)} (positives per class)")
+
     # Calculate metrics
     metrics = {}
     
@@ -845,11 +853,30 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
 
         # Other metrics
         y_pred = (all_probs > 0.5).astype(int)
+
+        # Calculate meaningful accuracy for multi-label classification
+        # Method 1: Hamming accuracy (fraction of correct individual predictions)
+        hamming_accuracy = np.mean(all_labels == y_pred)
+        metrics['hamming_accuracy'] = hamming_accuracy
+
+        # Method 2: Exact match accuracy (all labels correct for a sample)
+        exact_match_accuracy = np.mean(np.all(all_labels == y_pred, axis=1))
+        metrics['exact_match_accuracy'] = exact_match_accuracy
+
+        # Method 3: Sample-wise accuracy (average accuracy per sample)
+        sample_wise_accuracy = np.mean([
+            accuracy_score(all_labels[i], y_pred[i]) for i in range(len(all_labels))
+        ])
+        metrics['sample_accuracy'] = sample_wise_accuracy
+
+        # Keep exact match as 'accuracy' for backward compatibility but add others
+        metrics['accuracy'] = exact_match_accuracy
+
+        # Other classification metrics
         metrics['f1_macro'] = f1_score(all_labels, y_pred, average='macro', zero_division=0)
         metrics['f1_micro'] = f1_score(all_labels, y_pred, average='micro', zero_division=0)
         metrics['precision_macro'] = precision_score(all_labels, y_pred, average='macro', zero_division=0)
         metrics['recall_macro'] = recall_score(all_labels, y_pred, average='macro', zero_division=0)
-        metrics['accuracy'] = accuracy_score(all_labels, y_pred)
 
     except Exception as e:
         logger.error(f"Error calculating metrics: {e}")
@@ -861,15 +888,51 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
             'f1_micro': 0.0,
             'precision_macro': 0.0,
             'recall_macro': 0.0,
-            'accuracy': 0.0
+            'accuracy': 0.0,
+            'hamming_accuracy': 0.0,
+            'exact_match_accuracy': 0.0,
+            'sample_accuracy': 0.0
         })
     
     # Print results
     logger.info("=" * 50)
     logger.info("EVALUATION RESULTS")
     logger.info("=" * 50)
-    for metric_name, value in metrics.items():
-        logger.info(f"{metric_name:15s}: {value:.4f}")
+
+    # Log accuracy metrics first (most important for multi-label)
+    accuracy_metrics = ['hamming_accuracy', 'exact_match_accuracy', 'sample_accuracy', 'accuracy']
+    for metric_name in accuracy_metrics:
+        if metric_name in metrics:
+            value = metrics[metric_name]
+            logger.info(f"{metric_name:20s}: {value:.4f}")
+
+    logger.info("-" * 30)
+
+    # Log other metrics
+    other_metrics = ['auroc_macro', 'auroc_micro', 'f1_macro', 'f1_micro', 'precision_macro', 'recall_macro']
+    for metric_name in other_metrics:
+        if metric_name in metrics:
+            value = metrics[metric_name]
+            logger.info(f"{metric_name:20s}: {value:.4f}")
+
+    # Add interpretation
+    logger.info("-" * 30)
+    hamming_acc = metrics.get('hamming_accuracy', 0)
+    exact_acc = metrics.get('exact_match_accuracy', 0)
+
+    logger.info("INTERPRETATION:")
+    logger.info(f"  Hamming Acc: {hamming_acc:.1%} of individual predictions are correct")
+    logger.info(f"  Exact Match: {exact_acc:.1%} of samples have ALL labels correct")
+    logger.info(f"  (Low exact match is normal for multi-label with many classes)")
+
+    # Debug information
+    logger.info("-" * 30)
+    logger.info("DEBUG INFO:")
+    logger.info(f"  Total samples: {len(all_labels)}")
+    logger.info(f"  Predictions shape: {all_probs.shape}")
+    logger.info(f"  Labels shape: {all_labels.shape}")
+    logger.info(f"  Classes with positive samples: {np.sum(all_labels.sum(axis=0) > 0)}/{all_labels.shape[1]}")
+    logger.info(f"  Average labels per sample: {all_labels.sum(axis=1).mean():.2f}")
     
     # Save results
     results_file = Path("./results") / "evaluation_results.json"

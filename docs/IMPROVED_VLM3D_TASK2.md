@@ -207,6 +207,14 @@ python run_task2.py --model resnet101 --use-attention cbam --loss-type asl
    This happens when some classes have no positive samples in the dataset (like "Mosaic attenuation pattern: 0 samples" in your validation set). The macro AUROC becomes undefined for these classes.
    **Solution**: Fixed by computing AUROC only for classes with positive samples and averaging the valid values. The evaluation function now handles this automatically.
 
+8. **Accuracy Showing 0**
+   In multi-label classification, `accuracy_score` from sklearn calculates "exact match" accuracy (all labels must be correct for a sample to count as correct). With 18 classes and imbalanced data, this will almost always be 0.
+   **Solution**: Added multiple accuracy metrics:
+   - **Hamming Accuracy**: Fraction of individual predictions that are correct
+   - **Exact Match Accuracy**: Original accuracy (samples where ALL labels are correct)
+   - **Sample Accuracy**: Average accuracy per sample
+   Use Hamming Accuracy as the primary accuracy metric for multi-label tasks.
+
 ## 📁 File Structure
 
 ```
