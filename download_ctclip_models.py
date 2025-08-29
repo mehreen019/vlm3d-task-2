@@ -6,6 +6,7 @@ Uses huggingface_hub for proper authentication
 
 from pathlib import Path
 from huggingface_hub import hf_hub_download
+import shutil
 
 def main():
     print("CT-CLIP Model Downloader")
@@ -18,7 +19,7 @@ def main():
 
     # HuggingFace dataset repo + model files
     repo_id = "ibrahimhamamci/CT-RATE"
-    repo_type = "dataset"  # important: these are in a dataset repo
+    repo_type = "dataset"  # these models live in a dataset repo
 
     models = {
         "ctclip_classfine.pt": {
@@ -37,14 +38,21 @@ def main():
         print(f"📥 Downloading {local_name}: {model_info['description']}")
 
         try:
+            # Download from Hugging Face dataset repo
             filepath = hf_hub_download(
                 repo_id=repo_id,
                 repo_type=repo_type,
                 filename=model_info["filename"],
-                local_dir=str(models_dir)  # saves file inside models/
+                local_dir=str(models_dir)
             )
-            print(f"✅ Saved to: {filepath}\n")
+
+            # Move/rename to models/ctclip_classfine.pt or models/ctclip_vocabfine.pt
+            target_path = models_dir / local_name
+            shutil.move(filepath, target_path)
+
+            print(f"✅ Saved to: {target_path}\n")
             downloaded_models.append(local_name)
+
         except Exception as e:
             print(f"❌ Failed to download {local_name}: {e}\n")
 
