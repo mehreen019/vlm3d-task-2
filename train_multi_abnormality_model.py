@@ -393,7 +393,7 @@ class MultiAbnormalityModel(pl.LightningModule):
             "Emphysema", "Arterial wall calcification", "Coronary artery wall calcification"
         ]
     
-        def _build_backbone(self, model_name: str):
+    def _build_backbone(self, model_name: str):
         """Build the backbone network with CT-CLIP integration"""
         if model_name == "resnet50":
             backbone = models.resnet50(pretrained=True)
@@ -679,6 +679,58 @@ def get_transforms(augment: bool = False):
     
     return transform
 
+def find_optimal_threshold(probs, labels):
+    """Find optimal threshold using F1 score maximization"""
+    best_threshold = 0.5
+    best_f1 = 0
+
+    # Try different thresholds
+    thresholds = np.arange(0.1, 0.9, 0.05)
+
+    for threshold in thresholds:
+        y_pred = (probs > threshold).astype(int)
+        f1 = f1_score(labels, y_pred, average='macro', zero_division=0)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = threshold
+
+    return best_threshold
+
+def calculate_metrics_with_threshold(probs, labels, y_pred, suffix=""):
+    """Calculate metrics with specific threshold"""
+    metrics = {}
+
+    # Accuracy metrics
+    hamming_accuracy = np.mean(labels == y_pred)
+    exact_match_accuracy = np.mean(np.all(labels == y_pred, axis=1))
+    sample_wise_accuracy = np.mean([
+        accuracy_score(labels[i], y_pred[i]) for i in range(len(labels))
+    ])
+
+    metrics[f'hamming_accuracy{suffix}'] = hamming_accuracy
+    metrics[f'exact_match_accuracy{suffix}'] = exact_match_accuracy
+    metrics[f'sample_accuracy{suffix}'] = sample_wise_accuracy
+
+    # Classification metrics
+    try:
+        f1_macro = f1_score(labels, y_pred, average='macro', zero_division=0)
+        f1_micro = f1_score(labels, y_pred, average='micro', zero_division=0)
+        precision_macro = precision_score(labels, y_pred, average='macro', zero_division=0)
+        recall_macro = recall_score(labels, y_pred, average='macro', zero_division=0)
+
+        metrics[f'f1_macro{suffix}'] = f1_macro
+        metrics[f'f1_micro{suffix}'] = f1_micro
+        metrics[f'precision_macro{suffix}'] = precision_macro
+        metrics[f'recall_macro{suffix}'] = recall_macro
+    except Exception as e:
+        logger.warning(f"Error calculating classification metrics: {e}")
+        metrics[f'f1_macro{suffix}'] = 0.0
+        metrics[f'f1_micro{suffix}'] = 0.0
+        metrics[f'precision_macro{suffix}'] = 0.0
+        metrics[f'recall_macro{suffix}'] = 0.0
+
+    return metrics
+
 def load_data(data_dir: str = "./ct_rate_data", slice_dir: str = "./ct_rate_2d"):
     """Load CT-RATE data and slice metadata"""
     data_dir = Path(data_dir)
@@ -929,7 +981,7 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
             metrics['auroc_micro'] = 0.5
 
         # Threshold calibration - find optimal threshold
-        optimal_threshold = self._find_optimal_threshold(all_probs, all_labels)
+        optimal_threshold = find_optimal_threshold(all_probs, all_labels)
         logger.info(f"Optimal threshold found: {optimal_threshold:.3f}")
 
         # Use both 0.5 and optimal threshold for predictions
@@ -937,15 +989,11 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
         y_pred_opt = (all_probs > optimal_threshold).astype(int)
 
         # Calculate metrics with both thresholds
-        metrics_05 = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_05, suffix="_05")
-        metrics_opt = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_opt, suffix="_opt")
+        metrics_05 = calculate_metrics_with_threshold(all_probs, all_labels, y_pred_05, suffix="_05")
+        metrics_opt = calculate_metrics_with_threshold(all_probs, all_labels, y_pred_opt, suffix="_opt")
 
         # Use 0.5 threshold for main metrics (backward compatibility)
         y_pred = y_pred_05
-
-        # Calculate metrics with both thresholds
-        metrics_05 = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_05, suffix="_05")
-        metrics_opt = self._calculate_metrics_with_threshold(all_probs, all_labels, y_pred_opt, suffix="_opt")
 
         # Merge metrics
         metrics.update(metrics_05)

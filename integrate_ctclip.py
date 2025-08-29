@@ -92,7 +92,7 @@ def test_ctclip_integration():
     print(f"📁 Found {len(ctclip_models)} CT-CLIP model(s):")
     for model in ctclip_models:
         size_mb = model.stat().st_size / (1024 * 1024)
-        print(".1f"
+   
     # Test the first model
     ctclip_path = str(ctclip_models[0])
     print(f"\n🧪 Testing with: {ctclip_path}")
@@ -114,7 +114,7 @@ def test_ctclip_integration():
         # Test loss
         dummy_targets = torch.randint(0, 2, (4, 18)).float()
         loss = criterion(output, dummy_targets)
-        print(".4f"
+        print(".4f")
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
         backbone_params = sum(p.numel() for p in model.backbone.parameters())
@@ -124,8 +124,8 @@ def test_ctclip_integration():
         print(f"🏗️ Backbone params: {backbone_params:,}")
         print(f"🧠 Classifier params: {classifier_params:,}")
 
-        print("
-🎉 CT-CLIP integration successful!"        print("💡 Your model is ready for training with CT-specific features!"
+        print("🎉 CT-CLIP integration successful!")
+        print("💡 Your model is ready for training with CT-specific features!")
         return True
 
     except Exception as e:
@@ -196,10 +196,13 @@ def main():
 
     if success:
         show_integration_instructions()
-        print("
-🎯 READY TO INTEGRATE!"        print("1. Download models: python download_ctclip_models.py"        print("2. Modify your train_multi_abnormality_model.py"        print("3. Train: python run_task2.py --model efficientnet_b0"        print("4. Expect 25-35% AUROC improvement!"
+        print("🎯 READY TO INTEGRATE!")
+        print("1. Download models: python download_ctclip_models.py")
+        print("2. Modify your train_multi_abnormality_model.py")
+        print("3. Train: python run_task2.py --model efficientnet_b0")
+        print("4. Expect 25-35% AUROC improvement!")
     else:
-        print("
-❌ Integration failed!"        print("🔧 Check the error messages above"
+        print("❌ Integration failed. Please check the error messages above.")
+
 if __name__ == "__main__":
     main()

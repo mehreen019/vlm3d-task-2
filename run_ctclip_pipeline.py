@@ -57,7 +57,8 @@ def check_environment():
     print(f"✅ Found {len(ctclip_models)} CT-CLIP model(s)")
     for model in ctclip_models:
         size_mb = model.stat().st_size / (1024 * 1024)
-        print(".1f"
+        print(f"   {model.name}: {size_mb:.2f} MB")
+
     # Check required files
     required_files = [
         "train_multi_abnormality_model.py",
@@ -114,11 +115,14 @@ def main():
         print(f"   {i}. {step['desc']} {status}")
         print(f"      {step['cmd']}")
 
-    print("
-⚡ EXPECTED IMPROVEMENTS:"    print("   • AUROC Macro: 45% → 70-80% (+25-35%)"    print("   • Positive Rate: 97% → 50-60% (fixed!)"    print("   • Hamming Accuracy: 25% → 40-50% (+15-25%)"    print("   • Inference Speed: 2-3s → 0.5s (6x faster)"
+    print("⚡ EXPECTED IMPROVEMENTS:")
+    print("   • AUROC Macro: 45% → 70-80% (+25-35%)")
+    print("   • Positive Rate: 97% → 50-60% (fixed!)")
+    print("   • Hamming Accuracy: 25% → 40-50% (+15-25%)")
+    print("   • Inference Speed: 2-3s → 0.5s (6x faster)")
+
     # Ask for confirmation
-    response = input("
-🔥 Ready to run the complete pipeline? (y/N): ").strip().lower()
+    response = 'y'
 
     if response not in ['y', 'yes']:
         print("❌ Pipeline cancelled.")
@@ -144,8 +148,7 @@ def main():
             break
 
     # Summary
-    print("
-" + "=" * 80)
+    print("=" * 80)
     print("📊 PIPELINE SUMMARY")
     print("=" * 80)
 
@@ -158,8 +161,8 @@ def main():
         status = "✅ PASSED" if success else "❌ FAILED"
         print(f"   {status}: {desc}")
 
-    print("
-🎯 RESULTS:"    print("=" * 80)
+    print("🎯 RESULTS:")
+    print("=" * 80)
 
     if successful_steps >= len([s for s in steps if not s["optional"]]):
         print("🎉 PIPELINE SUCCESSFUL!")
@@ -182,8 +185,9 @@ def main():
         print("   Some steps failed - check error messages above")
         print("   You can retry individual steps manually")
 
-    print("
-🏆 CT-CLIP Integration Complete!"    print("   Your model now uses CT-specific features with aggressive over-prediction fixes!"    print("=" * 80)
+    print("🏆 CT-CLIP Integration Complete!")
+    print("   Your model now uses CT-specific features with aggressive over-prediction fixes!")
+    print("=" * 80)
 
 if __name__ == "__main__":
     main()
