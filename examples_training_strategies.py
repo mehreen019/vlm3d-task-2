@@ -38,6 +38,7 @@ def strategy_max_performance():
     cmd = """
     python run_task2.py \
       --model efficientnet_b0 \
+      --freeze-backbone \
       --use-attention cbam \
       --loss-type asl \
       --use-advanced-aug \
@@ -111,6 +112,7 @@ def strategy_high_performance():
     cmd = """
     python run_task2.py \
       --model efficientnet_b0 \
+      --freeze-backbone \
       --use-attention cbam \
       --loss-type asl \
       --use-advanced-aug \

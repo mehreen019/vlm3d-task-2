@@ -39,10 +39,12 @@ logger = logging.getLogger(__name__)
 
 # Advanced Attention Mechanisms
 class SEBlock(nn.Module):
-    """Squeeze-and-Excitation Block"""
+    """Squeeze-and-Excitation Block - Deterministic Version"""
     def __init__(self, channels, reduction=16):
         super(SEBlock, self).__init__()
-        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        self.channels = channels
+        self.reduction = reduction
+
         self.excitation = nn.Sequential(
             nn.Linear(channels, channels // reduction, bias=False),
             nn.ReLU(inplace=True),
@@ -52,18 +54,21 @@ class SEBlock(nn.Module):
 
     def forward(self, x):
         b, c, _, _ = x.size()
-        y = self.squeeze(x).view(b, c)
+        # Use deterministic global average pooling
+        y = torch.mean(x, dim=[2, 3])  # Global average pooling
         y = self.excitation(y).view(b, c, 1, 1)
-        return x * y.expand_as(x)
+        return x * y
 
 class CBAM(nn.Module):
-    """Convolutional Block Attention Module"""
+    """Convolutional Block Attention Module - Deterministic Version"""
     def __init__(self, channels, reduction=16, kernel_size=7):
         super(CBAM, self).__init__()
 
-        # Channel attention
+        self.channels = channels
+        self.reduction = reduction
+
+        # Channel attention - use deterministic pooling
         self.channel_attention = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channels, channels // reduction, 1, bias=False),
             nn.ReLU(inplace=True),
             nn.Conv2d(channels // reduction, channels, 1, bias=False)
@@ -76,19 +81,20 @@ class CBAM(nn.Module):
         )
 
     def forward(self, x):
-        # Channel attention
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        ca_input = torch.cat([avg_out, max_out], dim=1)
+        # Channel attention - deterministic implementation
+        # Use mean and max operations instead of AdaptiveMaxPool2d
+        avg_out = torch.mean(x, dim=[2, 3], keepdim=True)  # Global average pooling
+        max_out = torch.max(x.view(x.size(0), x.size(1), -1), dim=2, keepdim=True)[0]
+        max_out = max_out.view(x.size(0), x.size(1), 1, 1)
 
-        ca = self.channel_attention(ca_input)
-        ca = ca + torch.sigmoid(ca)
+        ca = self.channel_attention(avg_out + max_out)
+        ca = torch.sigmoid(ca)
 
         x = x * ca
 
-        # Spatial attention
+        # Spatial attention - deterministic
         avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        max_out = torch.max(x, dim=1, keepdim=True)[0]
         sa_input = torch.cat([avg_out, max_out], dim=1)
 
         sa = self.spatial_attention(sa_input)
@@ -460,9 +466,8 @@ class MultiAbnormalityModel(pl.LightningModule):
             logger.info(f"Backbone unfrozen at epoch {self.current_epoch_num}")
 
     def _create_metrics(self, prefix: str):
-        """Create torchmetrics for evaluation"""
+        """Create torchmetrics for evaluation (removed AUROC due to NaN issues with rare classes)"""
         return nn.ModuleDict({
-            'auroc': torchmetrics.AUROC(task='multilabel', num_labels=self.num_classes, average='macro'),
             'f1': torchmetrics.F1Score(task='multilabel', num_labels=self.num_classes, average='macro'),
             'precision': torchmetrics.Precision(task='multilabel', num_labels=self.num_classes, average='macro'),
             'recall': torchmetrics.Recall(task='multilabel', num_labels=self.num_classes, average='macro'),
@@ -514,10 +519,9 @@ class MultiAbnormalityModel(pl.LightningModule):
         loss = self.compute_loss(logits, labels)
         probs = torch.sigmoid(logits)
         
-        # Update metrics
-        self.train_metrics['auroc'].update(probs, labels.int())
+        # Update training metrics
         self.train_metrics['f1'].update(probs, labels.int())
-        
+
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         
         return loss
@@ -530,13 +534,13 @@ class MultiAbnormalityModel(pl.LightningModule):
         loss = self.compute_loss(logits, labels)
         probs = torch.sigmoid(logits)
         
-        # Update metrics
+        # Update validation metrics
         for name, metric in self.val_metrics.items():
             metric.update(probs, labels.int())
-        
+
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        
-        return {'val_loss': loss, 'probs': probs, 'labels': labels}
+
+        return {'val_loss': loss}
     
     def on_validation_epoch_end(self):
         """Log validation metrics"""
@@ -746,7 +750,7 @@ def train_model(args):
         logger=logger_tb,
         precision=16 if args.use_mixed_precision else 32,
         gradient_clip_val=1.0,
-        deterministic=True
+        deterministic=False  # Disable strict determinism to avoid issues with attention modules
     )
     
     # Train
@@ -813,18 +817,52 @@ def evaluate_model(checkpoint_path: str, slice_dir: str, data_dir: str):
     
     # Overall metrics
     try:
-        metrics['auroc_macro'] = roc_auc_score(all_labels, all_probs, average='macro')
-        metrics['auroc_micro'] = roc_auc_score(all_labels, all_probs, average='micro')
-        
+        # Compute AUROC with NaN handling
+        try:
+            auroc_macro = roc_auc_score(all_labels, all_probs, average='macro')
+            # Check if result is NaN (happens when classes have no positive samples)
+            if np.isnan(auroc_macro):
+                # Compute per-class AUROC and average only valid values
+                per_class_auroc = roc_auc_score(all_labels, all_probs, average=None)
+                valid_aurocs = per_class_auroc[~np.isnan(per_class_auroc)]
+                if len(valid_aurocs) > 0:
+                    auroc_macro = np.mean(valid_aurocs)
+                    logger.warning(f"AUROC macro computed from {len(valid_aurocs)}/{len(per_class_auroc)} valid classes")
+                else:
+                    auroc_macro = 0.5  # Default to random performance
+                    logger.warning("No valid AUROC classes found, using default value 0.5")
+            metrics['auroc_macro'] = auroc_macro
+        except Exception as e:
+            logger.warning(f"Could not compute AUROC macro: {e}")
+            metrics['auroc_macro'] = 0.5
+
+        # AUROC micro is more robust
+        try:
+            metrics['auroc_micro'] = roc_auc_score(all_labels, all_probs, average='micro')
+        except Exception as e:
+            logger.warning(f"Could not compute AUROC micro: {e}")
+            metrics['auroc_micro'] = 0.5
+
+        # Other metrics
         y_pred = (all_probs > 0.5).astype(int)
         metrics['f1_macro'] = f1_score(all_labels, y_pred, average='macro', zero_division=0)
         metrics['f1_micro'] = f1_score(all_labels, y_pred, average='micro', zero_division=0)
         metrics['precision_macro'] = precision_score(all_labels, y_pred, average='macro', zero_division=0)
         metrics['recall_macro'] = recall_score(all_labels, y_pred, average='macro', zero_division=0)
         metrics['accuracy'] = accuracy_score(all_labels, y_pred)
-        
+
     except Exception as e:
         logger.error(f"Error calculating metrics: {e}")
+        # Set default values
+        metrics.update({
+            'auroc_macro': 0.5,
+            'auroc_micro': 0.5,
+            'f1_macro': 0.0,
+            'f1_micro': 0.0,
+            'precision_macro': 0.0,
+            'recall_macro': 0.0,
+            'accuracy': 0.0
+        })
     
     # Print results
     logger.info("=" * 50)

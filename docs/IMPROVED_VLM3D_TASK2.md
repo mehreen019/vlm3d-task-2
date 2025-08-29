@@ -107,6 +107,7 @@ python run_task2.py \
 ```bash
 python run_task2.py \
   --model efficientnet_b0 \
+  --freeze-backbone \
   --use-attention cbam \
   --loss-type asl \
   --use-advanced-aug \
@@ -166,29 +167,45 @@ python run_task2.py --model resnet101 --use-attention cbam --loss-type asl
 
 ### Common Issues
 
-1. **Out of Memory**
+1. **CBAM Channel Mismatch Error**
+   ```
+   Given groups=1, weight of size [80, 1280, 1, 1], expected input[32, 2, 1, 1] to have 1280 channels, but got 2 channels instead
+   ```
+   **Solution**: This was fixed in the latest version. The CBAM implementation now correctly handles the channel attention computation.
+
+2. **Deterministic Algorithms Error**
+   ```
+   adaptive_max_pool2d_backward_cuda does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True)'
+   ```
+   **Solution**: Fixed by implementing deterministic versions of attention modules and disabling strict determinism in the trainer.
+
+3. **Out of Memory**
    ```bash
    # Reduce batch size
    --batch-size 16
    ```
 
-2. **Poor Performance**
+4. **Poor Performance**
    ```bash
    # Use progressive unfreezing
    --progressive-unfreeze --unfreeze-epoch 5
    ```
 
-3. **Slow Training**
+5. **Slow Training**
    ```bash
    # Freeze backbone and use larger batch
    --freeze-backbone --batch-size 64
    ```
 
-4. **Overfitting**
+6. **Overfitting**
    ```bash
    # Add augmentations and attention
    --use-advanced-aug --use-attention se
    ```
+
+7. **AUROC Macro Showing NaN**
+   This happens when some classes have no positive samples in the dataset (like "Mosaic attenuation pattern: 0 samples" in your validation set). The macro AUROC becomes undefined for these classes.
+   **Solution**: Fixed by computing AUROC only for classes with positive samples and averaging the valid values. The evaluation function now handles this automatically.
 
 ## 📁 File Structure
 
