@@ -15,18 +15,35 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def check_environment():
-    """Check if required dependencies are installed"""
+    """Check if required dependencies are installed and show system info"""
     try:
         import torch
         import pytorch_lightning as pl
         import torchvision
         import pandas as pd
         import numpy as np
+        
         logger.info("✅ All required dependencies found")
+        
+        # Show PyTorch and CUDA info
+        logger.info(f"PyTorch version: {torch.__version__}")
+        logger.info(f"PyTorch Lightning version: {pl.__version__}")
+        
+        # Show CUDA info
+        if torch.cuda.is_available():
+            logger.info(f"CUDA available: True")
+            logger.info(f"CUDA version: {torch.version.cuda}")
+            logger.info(f"Number of GPUs: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                gpu_name = torch.cuda.get_device_name(i)
+                logger.info(f"  GPU {i}: {gpu_name}")
+        else:
+            logger.warning("CUDA not available - will use CPU")
+        
         return True
     except ImportError as e:
         logger.error(f"❌ Missing dependency: {e}")
-        logger.error("Please run: source venv_name/bin/activate (after running setup_env.sh)")
+        logger.error("Please run: conda run -n YOUR_ENV_NAME python run_task2.py ...")
         return False
 
 def check_data_structure(data_dir="./ct_rate_data", slice_dir="./ct_rate_2d"):
@@ -90,6 +107,7 @@ def run_training(args):
             self.unfreeze_epoch = getattr(args, 'unfreeze_epoch', 10)
             self.use_advanced_aug = getattr(args, 'use_advanced_aug', False)
             self.cutmix_prob = getattr(args, 'cutmix_prob', 0.5)
+            self.gpu_device = getattr(args, 'gpu_device', None)
     
     training_args = TrainingArgs()
     
@@ -207,6 +225,10 @@ def main():
     parser.add_argument("--cutmix-prob", type=float, default=0.5,
                        help="Probability of applying CutMix augmentation")
     
+    # GPU Configuration
+    parser.add_argument("--gpu-device", type=int, default=None,
+                       help="Specific GPU device ID to use (0, 1, etc.). If not specified, auto-selects NVIDIA GPU")
+    
     # Evaluation and Prediction
     parser.add_argument("--checkpoint", 
                        help="Checkpoint path for evaluation/prediction (auto-detected if not specified)")
@@ -232,6 +254,10 @@ def main():
     logger.info(f"Model: {args.model}")
     logger.info(f"Data directory: {args.data_dir}")
     logger.info(f"Slice directory: {args.slice_dir}")
+    if args.gpu_device is not None:
+        logger.info(f"GPU device: {args.gpu_device} (manually specified)")
+    else:
+        logger.info("GPU device: Auto-select (will prefer NVIDIA over AMD)")
     logger.info("=" * 60)
     
     success = True
@@ -291,6 +317,9 @@ def main():
     logger.info("   - Results: ./results/")
     logger.info("\n🔧 To view training progress:")
     logger.info("   tensorboard --logdir ./logs")
+    logger.info("\n💡 For future runs with conda environment:")
+    logger.info(f"   conda run -n YOUR_ENV_NAME python run_task2.py --gpu-device 1 --loss-type focal --freeze-backbone --epochs 50")
+    logger.info("   (Replace YOUR_ENV_NAME with your actual conda environment name)")
 
 if __name__ == "__main__":
     main() 
