@@ -34,7 +34,6 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import cv2
 from scipy import ndimage
-import imgaug.augmenters as iaa
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -185,7 +184,16 @@ class EnhancedCTSliceDataset(Dataset):
         
         # Extract volume name from slice path
         slice_filename = slice_path.name
-        volume_name = '_'.join(slice_filename.split('_')[:-2]) + '.nii.gz'
+        # Remove _slice_X.npy suffix and reconstruct volume name
+        # Example: train_1_a_1.nii.gz_slice_45.npy -> train_1_a_1.nii.gz
+        if '_slice_' in slice_filename:
+            volume_name = slice_filename.split('_slice_')[0]
+            # Handle case where .nii.gz is already in the name
+            if not volume_name.endswith('.nii.gz'):
+                volume_name += '.nii.gz'
+        else:
+            # Fallback to original logic
+            volume_name = '_'.join(slice_filename.split('_')[:-2]) + '.nii.gz'
         
         # Load slice
         try:
@@ -210,8 +218,7 @@ class EnhancedCTSliceDataset(Dataset):
         if volume_name in self.slice_to_labels:
             labels = self.slice_to_labels[volume_name]
         else:
-            logger.warning(f"No labels found for {volume_name}")
-            labels = np.zeros(len(self.abnormality_cols), dtype=np.float32)
+            raise KeyError(f"No labels found for {volume_name}. Available volumes: {list(self.slice_to_labels.keys())[:5]}...")
         
         return image, torch.tensor(labels, dtype=torch.float32)
 

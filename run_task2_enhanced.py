@@ -175,27 +175,28 @@ def run_single_fold_training(fold_data, config, args, fold_num):
             
             # Model configuration from config file
             self.model_name = config['model']['backbone']
-            self.num_classes = config['model']['num_classes']
-            self.dropout_rate = config['model']['dropout_rate']
-            
-            # Training configuration from config file
-            self.batch_size = config['training']['batch_size']
-            self.learning_rate = config['training']['learning_rate']
-            self.weight_decay = config['training']['weight_decay']
-            self.max_epochs = config['training']['max_epochs']
-            self.early_stopping_patience = config['training']['early_stopping_patience']
-            self.gradient_clip_val = config['training']['gradient_clip_val']
-            self.accumulate_grad_batches = config['training']['accumulate_grad_batches']
-            
+            self.batch_size = int(config['training']['batch_size'])
+            self.learning_rate = float(config['training']['learning_rate'])
+            self.weight_decay = float(config['training']['weight_decay'])
+            self.max_epochs = int(config['training']['max_epochs'])
+            self.early_stopping_patience = int(config['training']['early_stopping_patience'])
+            self.dropout_rate = float(config['model']['dropout_rate'])
+            self.num_classes = int(config['model']['num_classes'])
+            self.gpus = int(config['training']['gpus'])
+            self.num_workers = int(config['training']['num_workers'])
+            self.seed = int(config['training']['seed'])
+            self.gradient_clip_val = float(config['training']['gradient_clip_val'])
+            self.accumulate_grad_batches = int(config['training']['accumulate_grad_batches'])
+
             # Loss and sampling
             self.use_focal_loss = config['training']['use_focal_loss']
             self.use_weighted_sampling = config['training']['use_weighted_sampling'] 
             self.use_mixed_precision = config['training']['use_mixed_precision']
             
             # Hardware
-            self.gpus = config['training']['gpus']
-            self.num_workers = config['training']['num_workers']
-            self.seed = config['training']['seed']
+            self.gpus = int(config['training']['gpus'])
+            self.num_workers = int(config['training']['num_workers'])
+            self.seed = int(config['training']['seed'])
             
             # Directories
             self.checkpoint_dir = fold_checkpoint_dir
