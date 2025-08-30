@@ -80,6 +80,16 @@ def run_training(args):
             self.use_mixed_precision = True
             self.checkpoint_dir = "./checkpoints"
             self.log_dir = "./logs"
+
+            # Advanced training arguments
+            self.freeze_backbone = getattr(args, 'freeze_backbone', False)
+            self.use_attention = getattr(args, 'use_attention', 'none')
+            self.use_multiscale = getattr(args, 'use_multiscale', False)
+            self.loss_type = getattr(args, 'loss_type', 'focal')
+            self.progressive_unfreeze = getattr(args, 'progressive_unfreeze', False)
+            self.unfreeze_epoch = getattr(args, 'unfreeze_epoch', 10)
+            self.use_advanced_aug = getattr(args, 'use_advanced_aug', False)
+            self.cutmix_prob = getattr(args, 'cutmix_prob', 0.5)
     
     training_args = TrainingArgs()
     
@@ -169,15 +179,33 @@ def main():
                        help="Extracted slices directory")
     
     # Model parameters
-    parser.add_argument("--model", default="resnet50", 
+    parser.add_argument("--model", default="resnet50",
                        choices=["resnet50", "resnet101", "efficientnet_b0"],
                        help="Model backbone")
-    parser.add_argument("--batch-size", type=int, default=32, 
+    parser.add_argument("--batch-size", type=int, default=32,
                        help="Batch size")
-    parser.add_argument("--learning-rate", type=float, default=1e-4, 
+    parser.add_argument("--learning-rate", type=float, default=1e-4,
                        help="Learning rate")
-    parser.add_argument("--epochs", type=int, default=100, 
+    parser.add_argument("--epochs", type=int, default=100,
                        help="Number of epochs")
+
+    # Advanced training parameters
+    parser.add_argument("--freeze-backbone", action="store_true",
+                       help="Freeze backbone layers during training")
+    parser.add_argument("--use-attention", choices=["none", "se", "cbam"], default="none",
+                       help="Attention mechanism: none, se (Squeeze-Excitation), cbam (CBAM)")
+    parser.add_argument("--use-multiscale", action="store_true",
+                       help="Use multi-scale feature fusion")
+    parser.add_argument("--loss-type", choices=["focal", "bce", "asl"], default="focal",
+                       help="Loss function: focal, bce, asl (Asymmetric Loss)")
+    parser.add_argument("--progressive-unfreeze", action="store_true",
+                       help="Use progressive unfreezing of backbone layers")
+    parser.add_argument("--unfreeze-epoch", type=int, default=10,
+                       help="Epoch to unfreeze backbone in progressive unfreezing")
+    parser.add_argument("--use-advanced-aug", action="store_true",
+                       help="Use advanced augmentations (CutMix, MixUp)")
+    parser.add_argument("--cutmix-prob", type=float, default=0.5,
+                       help="Probability of applying CutMix augmentation")
     
     # Evaluation and Prediction
     parser.add_argument("--checkpoint", 
