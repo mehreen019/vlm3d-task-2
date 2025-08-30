@@ -347,6 +347,18 @@ class CTSliceExtractor:
         
         return slice_data
     
+    def copy_labels_file(self):
+        """Copy multi_abnormality_labels.csv to output directory for easy access"""
+        source_labels = self.data_dir / "multi_abnormality_labels.csv"
+        dest_labels = self.output_dir / "multi_abnormality_labels.csv"
+        
+        if source_labels.exists():
+            import shutil
+            shutil.copy2(source_labels, dest_labels)
+            logger.info(f"📋 Copied labels file: {source_labels} -> {dest_labels}")
+        else:
+            logger.warning(f"⚠️ Labels file not found: {source_labels}")
+
     def process_split(self, split_name: str) -> pd.DataFrame:
         """Process all volumes in a data split"""
         logger.info(f"Processing {split_name} split...")
@@ -487,6 +499,9 @@ def main():
         slice_strategy=args.strategy,
         slices_per_volume=args.slices_per_volume
     )
+    
+    # Copy labels file first (before processing splits)
+    extractor.copy_labels_file()
     
     # Process each split
     all_stats = {}

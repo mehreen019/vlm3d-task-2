@@ -52,7 +52,7 @@ def check_data_structure(data_dir="./ct_rate_data", slice_dir="./ct_rate_2d"):
     slice_dir = Path(slice_dir)
     
     required_files = [
-        data_dir / "multi_abnormality_labels.csv",
+        slice_dir / "multi_abnormality_labels.csv",  # Now expect it in ct_rate_2d folder
         slice_dir / "splits" / "train_slices.csv", 
         slice_dir / "splits" / "valid_slices.csv"
     ]
@@ -68,7 +68,8 @@ def check_data_structure(data_dir="./ct_rate_data", slice_dir="./ct_rate_2d"):
             logger.error(f"   {file_path}")
         logger.error("\nPlease run:")
         logger.error("1. python ct_rate_downloader.py --max-storage-gb 5 --download-volumes")
-        logger.error("2. python 2d_slice_extractor.py")
+        logger.error("2. python 2d_slice_extractor.py --data-dir ./ct_rate_data --output-dir ./ct_rate_2d")
+        logger.error("   (This will automatically copy multi_abnormality_labels.csv to ct_rate_2d/)")
         return False
     
     logger.info("✅ Data structure is correct")
@@ -110,7 +111,7 @@ def run_training(args):
     # Set up arguments for training
     class TrainingArgs:
         def __init__(self):
-            self.data_dir = args.data_dir
+            self.data_dir = args.slice_dir  # Use slice_dir for labels (now contains multi_abnormality_labels.csv)
             self.slice_dir = args.slice_dir
             self.model_name = args.model
             self.batch_size = args.batch_size
@@ -213,7 +214,7 @@ def run_evaluation(checkpoint_path, args):
     from train_multi_abnormality_model import evaluate_model
     
     try:
-        metrics = evaluate_model(checkpoint_path, args.slice_dir, args.data_dir)
+        metrics = evaluate_model(checkpoint_path, args.slice_dir, args.slice_dir)
         logger.info("🎉 Evaluation completed successfully!")
         return metrics
     except Exception as e:
