@@ -1,0 +1,35 @@
+# Enhanced requirements for improved AUROC performance
+# Install with: pip install -r requirements_enhanced.txt
+
+# Core dependencies (if not already installed)
+torch>=1.12.0
+torchvision>=0.13.0
+pytorch-lightning>=1.8.0
+torchmetrics>=0.10.0
+
+# Data processing
+pandas>=1.3.0
+numpy>=1.21.0
+scikit-learn>=1.0.0
+
+# Advanced augmentations
+albumentations>=1.3.0
+imgaug>=0.4.0
+
+# Image processing
+opencv-python>=4.6.0
+scipy>=1.7.0
+
+# Configuration
+PyYAML>=6.0
+
+# Visualization and logging
+matplotlib>=3.5.0
+seaborn>=0.11.0
+tensorboard>=2.8.0
+
+# Progress tracking
+tqdm>=4.62.0
+
+# Optional: For better performance
+# efficientnet-pytorch>=0.7.1  # If using EfficientNet
