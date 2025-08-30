@@ -37,6 +37,46 @@ warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def setup_gpu_device(device_id=None):
+    """Setup GPU device for training, with preference for NVIDIA over AMD"""
+    if not torch.cuda.is_available():
+        logger.warning("CUDA not available, using CPU")
+        return 'cpu', 0
+    
+    num_gpus = torch.cuda.device_count()
+    logger.info(f"Found {num_gpus} GPU(s)")
+    
+    # Show all available GPUs
+    for i in range(num_gpus):
+        gpu_name = torch.cuda.get_device_name(i)
+        logger.info(f"GPU {i}: {gpu_name}")
+    
+    # If device_id is specified, use it
+    if device_id is not None:
+        if device_id < num_gpus:
+            selected_gpu = device_id
+            logger.info(f"Using specified GPU {selected_gpu}: {torch.cuda.get_device_name(selected_gpu)}")
+        else:
+            logger.error(f"Specified device {device_id} not available. Only {num_gpus} GPUs found.")
+            selected_gpu = 0
+    else:
+        # Auto-select NVIDIA GPU if available (prefer over AMD)
+        selected_gpu = 0
+        for i in range(num_gpus):
+            gpu_name = torch.cuda.get_device_name(i).lower()
+            if 'nvidia' in gpu_name or 'rtx' in gpu_name or 'gtx' in gpu_name:
+                selected_gpu = i
+                logger.info(f"Auto-selected NVIDIA GPU {selected_gpu}: {torch.cuda.get_device_name(selected_gpu)}")
+                break
+        else:
+            logger.warning(f"No NVIDIA GPU found, using GPU {selected_gpu}: {torch.cuda.get_device_name(selected_gpu)}")
+    
+    # Set the selected GPU as the current device
+    torch.cuda.set_device(selected_gpu)
+    logger.info(f"Set CUDA device to: {selected_gpu}")
+    
+    return 'gpu', selected_gpu
+
 # Advanced Attention Mechanisms
 class SEBlock(nn.Module):
     """Squeeze-and-Excitation Block - Deterministic Version"""
@@ -870,11 +910,14 @@ def train_model(args):
         name='multi_abnormality_classification'
     )
     
+    # Setup GPU device
+    accelerator, device_id = setup_gpu_device(getattr(args, 'gpu_device', None))
+    
     # Trainer
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
-        accelerator='auto',
-        devices='auto',
+        accelerator=accelerator,
+        devices=[device_id] if accelerator == 'gpu' else 'auto',
         callbacks=[checkpoint_callback, early_stopping, lr_monitor],
         logger=logger_tb,
         precision=16 if args.use_mixed_precision else 32,
