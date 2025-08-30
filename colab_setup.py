@@ -16,9 +16,13 @@ def setup_colab_environment():
     """Setup Colab environment with Drive mounting"""
     
     try:
-        # Check if running in Colab
-        import google.colab
-        logger.info("🔍 Detected Google Colab environment")
+        # Check if running in Colab - multiple detection methods
+        import sys
+        if 'google.colab' in sys.modules or 'COLAB_GPU' in os.environ:
+            logger.info("🔍 Detected Google Colab environment")
+        else:
+            import google.colab
+            logger.info("🔍 Detected Google Colab environment")
         
         # Mount Google Drive
         from google.colab import drive
