@@ -359,11 +359,17 @@ def main():
         config['evaluation']['cv_folds'] = args.cv_folds
     
     # Load data
-    slice_dir = Path(args.slice_dir)
+    slice_dir = Path(args.slice_dir).resolve()
     labels_path = slice_dir / "multi_abnormality_labels.csv"
+    
+    # Debug path information
+    logger.info(f"Looking for labels file at: {labels_path}")
+    logger.info(f"Slice directory exists: {slice_dir.exists()}")
+    logger.info(f"Labels file exists: {labels_path.exists()}")
     
     if not labels_path.exists():
         logger.error(f"❌ Labels file not found: {labels_path}")
+        logger.error(f"Directory contents: {list(slice_dir.glob('*')) if slice_dir.exists() else 'Directory does not exist'}")
         sys.exit(1)
     
     labels_df = pd.read_csv(labels_path)
