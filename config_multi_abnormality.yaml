@@ -10,19 +10,19 @@ data:
 
 # Model configuration
 model:
-  backbone: "resnet50"  # Options: resnet50, resnet101, efficientnet_b0, densenet121
-  dropout_rate: 0.3
+  backbone: "efficientnet_b2"  # Upgraded from b0 for better capacity
+  dropout_rate: 0.4  # Increased dropout
   num_classes: 18
 
 # Training configuration
 training:
-  batch_size: 32
-  learning_rate: 1e-4
-  weight_decay: 1e-5
-  max_epochs: 100
-  early_stopping_patience: 15
-  gradient_clip_val: 1.0
-  accumulate_grad_batches: 1
+  batch_size: 16  # Reduced for more stable gradients
+  learning_rate: 3e-5  # Lower LR for better convergence
+  weight_decay: 1e-4  # Increased regularization
+  max_epochs: 150
+  early_stopping_patience: 25  # More patience for complex model
+  gradient_clip_val: 0.5  # Tighter gradient clipping
+  accumulate_grad_batches: 2  # Effective batch size = 32
   
   # Loss and sampling
   use_focal_loss: true  # Better for imbalanced data
@@ -62,31 +62,40 @@ classes:
 # Evaluation metrics weights (for final ranking)
 evaluation:
   metrics:
-    auroc_weight: 0.3
+    auroc_weight: 0.4  # Increased AUROC weight
     f1_weight: 0.25
-    precision_weight: 0.2
+    precision_weight: 0.15
     recall_weight: 0.15
-    accuracy_weight: 0.1
+    accuracy_weight: 0.05  # Reduced accuracy weight
   
   # Thresholds for binary classification
-  decision_threshold: 0.5
+  decision_threshold: 0.4  # Lower threshold for better recall
   
   # Cross-validation settings
-  cv_folds: 5
+  cv_folds: 3  # Reduced for faster experimentation
   stratified_cv: true
 
 # Data augmentation (applied during training)
 augmentation:
-  rotation_degrees: 10
-  horizontal_flip_prob: 0.5
-  affine_translate: 0.1
+  rotation_degrees: 15  # Increased rotation
+  horizontal_flip_prob: 0.6  # Increased flip probability
+  vertical_flip_prob: 0.3  # Add vertical flip
+  affine_translate: 0.15  # Increased translation
+  scale_range: [0.9, 1.1]  # Add scaling
   color_jitter:
-    brightness: 0.2
-    contrast: 0.2
+    brightness: 0.3  # Increased brightness variation
+    contrast: 0.3   # Increased contrast variation
+    saturation: 0.1  # Add saturation
+  gaussian_noise: 0.02  # Add noise
+  elastic_transform: true  # Add elastic deformation
 
 # Preprocessing (applied to all data)
 preprocessing:
-  target_size: [224, 224]
+  target_size: [256, 256]  # Larger input size
   normalization:
     mean: [0.485, 0.456, 0.406]  # ImageNet pretrained weights
-    std: [0.229, 0.224, 0.225] 
+    std: [0.229, 0.224, 0.225]
+  hu_windowing:  # CT-specific preprocessing
+    min_hu: -1000
+    max_hu: 400
+  clahe: true  # Contrast Limited Adaptive Histogram Equalization 
