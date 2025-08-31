@@ -95,8 +95,16 @@ def run_training(args):
             self.weight_decay = 1e-5
             self.num_workers = 4
             self.use_mixed_precision = True
-            self.checkpoint_dir = "./checkpoints"
-            self.log_dir = "./logs"
+            #self.checkpoint_dir = "./checkpoints"
+            #self.log_dir = "./logs"
+             # (keep only once at top of file; you already import os)
+            fold = os.getenv("FOLD_INDEX")
+            if fold is not None:
+                self.checkpoint_dir = f"./checkpoints/fold{fold}"
+                self.log_dir = f"./logs/fold{fold}"
+            else:
+                self.checkpoint_dir = "./checkpoints"
+                self.log_dir = "./logs"
 
             # Advanced training arguments
             self.freeze_backbone = getattr(args, 'freeze_backbone', False)
@@ -112,9 +120,17 @@ def run_training(args):
     training_args = TrainingArgs()
     
     # Create output directories
-    os.makedirs("./checkpoints", exist_ok=True)
-    os.makedirs("./logs", exist_ok=True)
+    #os.makedirs("./checkpoints", exist_ok=True)
+    #os.makedirs("./logs", exist_ok=True)
+    #os.makedirs("./results", exist_ok=True)
+    # Create output directories (use per-fold dirs if provided)
+    os.makedirs(training_args.checkpoint_dir, exist_ok=True)
+    os.makedirs(training_args.log_dir, exist_ok=True)
     os.makedirs("./results", exist_ok=True)
+
+    logger.info(f"Checkpoints → {training_args.checkpoint_dir}")
+    logger.info(f"Logs        → {training_args.log_dir}")
+
     
     # Run training
     try:
@@ -170,18 +186,39 @@ def run_prediction(checkpoint_path, args):
         logger.error(f"❌ Prediction failed: {e}")
         return False
 
+#def find_best_checkpoint():
+    #"""Find the best model checkpoint"""
+    #checkpoint_dir = Path("./checkpoints")
+    #if not checkpoint_dir.exists():
+        #return None
+    
+    #checkpoints = list(checkpoint_dir.glob("*.ckpt"))
+    #if not checkpoints:
+        #return None
+    
+    # Return the most recent checkp#
+    #return str(sorted(checkpoints, key=lambda x: x.stat().st_mtime)[-1])
+
+    #if checkpoint_dir is None:
+        #checkpoint_dir = os.getenv("CHECKPOINT_DIR", "./checkpoints")
+
+   # checkpoint_dir = Path(checkpoint_dir)
+    #if not checkpoint_dir.exists():
+       # return None
+
+    #ckpts = sorted(checkpoint_dir.glob("*.ckpt"), key=lambda p: p.stat().st_mtime)
+    #return str(ckpts[-1]) if ckpts else None
 def find_best_checkpoint():
     """Find the best model checkpoint"""
-    checkpoint_dir = Path("./checkpoints")
+    checkpoint_dir = os.getenv("CHECKPOINT_DIR", "./checkpoints")
+    checkpoint_dir = Path(checkpoint_dir)
+    
     if not checkpoint_dir.exists():
         return None
-    
-    checkpoints = list(checkpoint_dir.glob("*.ckpt"))
-    if not checkpoints:
-        return None
-    
-    # Return the most recent checkpoint
-    return str(sorted(checkpoints, key=lambda x: x.stat().st_mtime)[-1])
+
+    ckpts = sorted(checkpoint_dir.glob("*.ckpt"), key=lambda p: p.stat().st_mtime)
+    return str(ckpts[-1]) if ckpts else None
+
 
 def main():
     parser = argparse.ArgumentParser(description="VLM3D Task 2: Multi-Abnormality Classification")
