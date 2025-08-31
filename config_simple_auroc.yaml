@@ -10,7 +10,7 @@ data:
 
 # Model configuration
 model:
-  backbone: "resnet101"  # Highest capacity supported
+  backbone: "efficientnet_b3"  # High capacity with CT-CLIP support
   dropout_rate: 0.4
   num_classes: 18
 

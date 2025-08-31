@@ -325,7 +325,13 @@ class EnhancedMultiAbnormalityModel(pl.LightningModule):
             feature_dim = self.backbone.fc.in_features
             self.backbone.fc = nn.Identity()
         elif 'efficientnet' in model_name:
-            feature_dim = self.backbone.classifier.in_features
+            # Handle different EfficientNet versions
+            if hasattr(self.backbone.classifier, '__len__') and len(self.backbone.classifier) > 1:
+                # EfficientNet with sequential classifier (B3+)
+                feature_dim = self.backbone.classifier[1].in_features
+            else:
+                # EfficientNet with single classifier layer (B0)
+                feature_dim = self.backbone.classifier.in_features
             self.backbone.classifier = nn.Identity()
         
         # Attention mechanism
@@ -368,17 +374,69 @@ class EnhancedMultiAbnormalityModel(pl.LightningModule):
         self.val_metrics = self._create_metrics('val')
     
     def _build_backbone(self, model_name):
-        """Build backbone model"""
+        """Build backbone model with CT-CLIP integration"""
         if model_name == 'resnet50':
             backbone = models.resnet50(pretrained=True)
         elif model_name == 'resnet101':
             backbone = models.resnet101(pretrained=True)
         elif model_name == 'efficientnet_b0':
             backbone = models.efficientnet_b0(pretrained=True)
+        elif model_name == 'efficientnet_b3':
+            try:
+                backbone = models.efficientnet_b3(pretrained=True)
+            except:
+                # Fallback to EfficientNet-B0 if B3 not available
+                logger.warning("EfficientNet-B3 not available, falling back to B0")
+                backbone = models.efficientnet_b0(pretrained=True)
         else:
             raise ValueError(f"Unsupported model: {model_name}")
         
+        # Try to load CT-CLIP weights for better performance
+        self._load_ctclip_weights(backbone, model_name)
+        
         return backbone
+    
+    def _load_ctclip_weights(self, backbone, model_name):
+        """Load CT-CLIP weights if available"""
+        if 'efficientnet' in model_name:
+            # CT-CLIP model paths in order of preference
+            ctclip_paths = [
+                'models/ctclip_classfine.pt',
+                'models/ctclip_vocabfine.pt',
+                './models/ctclip_classfine.pt',
+                './models/ctclip_vocabfine.pt'
+            ]
+            
+            ctclip_loaded = False
+            for ctclip_path in ctclip_paths:
+                if os.path.exists(ctclip_path):
+                    try:
+                        state_dict = torch.load(ctclip_path, map_location='cpu')
+                        # Extract vision encoder weights from CT-CLIP
+                        vision_weights = {}
+                        for key, value in state_dict.items():
+                            if 'vision_encoder' in key or 'visual' in key:
+                                new_key = key.replace('vision_encoder.', '').replace('visual.', '')
+                                vision_weights[new_key] = value
+                        
+                        if vision_weights:
+                            backbone.load_state_dict(vision_weights, strict=False)
+                            logger.info(f"🎯 Loaded CT-CLIP weights from {ctclip_path}")
+                        else:
+                            # Try direct loading
+                            backbone.load_state_dict(state_dict, strict=False)
+                            logger.info(f"🎯 Loaded CT-CLIP weights (direct) from {ctclip_path}")
+                        
+                        ctclip_loaded = True
+                        break
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to load CT-CLIP from {ctclip_path}: {e}")
+                        continue
+            
+            if not ctclip_loaded:
+                logger.info("ℹ️ Using ImageNet pretrained weights (CT-CLIP not found)")
+        else:
+            logger.info(f"ℹ️ CT-CLIP not applicable for {model_name}, using ImageNet weights")
     
     def _create_metrics(self, stage):
         """Create torchmetrics for evaluation"""

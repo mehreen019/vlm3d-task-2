@@ -8,9 +8,9 @@ data:
   val_csv: "./ct_rate_2d/splits/valid_slices.csv"
   test_csv: "./ct_rate_2d/splits/test_slices.csv"
 
-# Model configuration - Optimized for AUROC
+# Model configuration - Optimized for AUROC with CT-CLIP
 model:
-  backbone: "resnet101"  # Highest capacity supported model
+  backbone: "efficientnet_b3"  # High capacity with CT-CLIP support
   dropout_rate: 0.5  # High dropout for regularization
   num_classes: 18
 
