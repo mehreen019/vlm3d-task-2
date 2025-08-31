@@ -10,12 +10,9 @@ data:
 
 # Model configuration - Optimized for AUROC
 model:
-  backbone: "efficientnet_b3"  # Higher capacity model
+  backbone: "resnet101"  # Highest capacity supported model
   dropout_rate: 0.5  # High dropout for regularization
   num_classes: 18
-  use_attention: "cbam"  # Channel and spatial attention
-  use_multiscale_fusion: true
-  freeze_backbone_epochs: 10  # Progressive unfreezing
 
 # Training configuration - Optimized for stability and convergence
 training:
@@ -27,26 +24,10 @@ training:
   gradient_clip_val: 0.3  # Tight gradient clipping
   accumulate_grad_batches: 3  # Effective batch size = 36
   
-  # Advanced training techniques
-  use_cosine_annealing: true
-  warmup_epochs: 10
-  min_lr_ratio: 0.01
-  
   # Loss and sampling - Optimized for imbalanced data
   use_focal_loss: true
-  focal_alpha: 0.25
-  focal_gamma: 3.0  # Higher gamma for hard examples
   use_weighted_sampling: true
   use_mixed_precision: true
-  
-  # Advanced techniques for AUROC
-  use_label_smoothing: true
-  label_smoothing_factor: 0.05  # Light smoothing
-  use_mixup: true
-  mixup_alpha: 0.3
-  use_cutmix: true
-  cutmix_alpha: 1.0
-  cutmix_prob: 0.5
   
   # Hardware
   gpus: 1
@@ -120,41 +101,8 @@ augmentation:
 
 # Enhanced preprocessing for CT images
 preprocessing:
-  target_size: [288, 288]  # Larger input for more detail
+  target_size: [256, 256]  # Optimized input size
   normalization:
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
   
-  # CT-specific preprocessing
-  hu_windowing:
-    min_hu: -1200  # Wider HU range
-    max_hu: 600
-  clahe: true
-  gamma_correction: 1.2
-  histogram_equalization: true
-  
-  # Multi-scale training
-  multiscale_training: true
-  scale_sizes: [[256, 256], [288, 288], [320, 320]]
-  
-# Advanced optimization settings
-optimization:
-  optimizer: "adamw"  # Better than Adam for vision tasks
-  scheduler: "cosine_annealing_warm_restarts"
-  t_0: 20  # Cosine annealing period
-  t_mult: 2  # Period multiplication
-  eta_min_ratio: 0.001
-  
-  # Advanced regularization
-  stochastic_weight_averaging: true
-  swa_start_epoch: 100
-  swa_lr: 1e-5
-  
-  # Gradient accumulation strategy
-  gradient_checkpointing: true  # Memory efficient
-  
-# Model ensemble (for inference)
-ensemble:
-  use_tta: true  # Test Time Augmentation
-  tta_transforms: 8
-  use_model_ensemble: false  # Can be enabled if multiple models trained
