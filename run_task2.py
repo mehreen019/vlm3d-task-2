@@ -52,7 +52,7 @@ def check_data_structure(data_dir="./ct_rate_data", slice_dir="./ct_rate_2d"):
     slice_dir = Path(slice_dir)
     
     required_files = [
-        data_dir / "multi_abnormality_labels.csv",
+        slice_dir / "multi_abnormality_labels.csv",  # Now expect it in ct_rate_2d folder
         slice_dir / "splits" / "train_slices.csv", 
         slice_dir / "splits" / "valid_slices.csv"
     ]
@@ -68,15 +68,42 @@ def check_data_structure(data_dir="./ct_rate_data", slice_dir="./ct_rate_2d"):
             logger.error(f"   {file_path}")
         logger.error("\nPlease run:")
         logger.error("1. python ct_rate_downloader.py --max-storage-gb 5 --download-volumes")
-        logger.error("2. python 2d_slice_extractor.py")
+        logger.error("2. python 2d_slice_extractor.py --data-dir ./ct_rate_data --output-dir ./ct_rate_2d")
+        logger.error("   (This will automatically copy multi_abnormality_labels.csv to ct_rate_2d/)")
         return False
     
     logger.info("✅ Data structure is correct")
     return True
 
+def find_resume_checkpoint():
+    """Find the most recent checkpoint to resume from"""
+    checkpoint_dir = Path("./checkpoints")
+    if not checkpoint_dir.exists():
+        return None
+    
+    # Look for the most recent checkpoint
+    checkpoints = list(checkpoint_dir.glob("*.ckpt"))
+    if not checkpoints:
+        return None
+    
+    # Return the most recent checkpoint
+    latest_checkpoint = sorted(checkpoints, key=lambda x: x.stat().st_mtime)[-1]
+    logger.info(f"🔄 Found existing checkpoint: {latest_checkpoint}")
+    return str(latest_checkpoint)
+
+
 def run_training(args):
-    """Run the training pipeline"""
+    """Run the training pipeline with Colab-friendly checkpointing"""
     logger.info("🚀 Starting Multi-Abnormality Classification Training")
+    
+    # Check for existing checkpoint to resume from
+    resume_checkpoint = None
+    if args.resume and not args.force_restart:
+        resume_checkpoint = find_resume_checkpoint()
+        if resume_checkpoint:
+            logger.info(f"📂 Resuming from checkpoint: {resume_checkpoint}")
+        else:
+            logger.info("📂 No checkpoint found, starting fresh training")
     
     # Import the training module
     from train_multi_abnormality_model import train_model
@@ -84,13 +111,13 @@ def run_training(args):
     # Set up arguments for training
     class TrainingArgs:
         def __init__(self):
-            self.data_dir = args.data_dir
+            self.data_dir = args.slice_dir  # Use slice_dir for labels (now contains multi_abnormality_labels.csv)
             self.slice_dir = args.slice_dir
             self.model_name = args.model
             self.batch_size = args.batch_size
             self.learning_rate = args.learning_rate
             self.max_epochs = args.epochs
-            self.early_stopping_patience = 10
+            self.early_stopping_patience = getattr(args, 'early_stopping_patience', 10)
             self.dropout_rate = 0.3
             self.weight_decay = 1e-5
             self.num_workers = 4
@@ -105,6 +132,7 @@ def run_training(args):
             else:
                 self.checkpoint_dir = "./checkpoints"
                 self.log_dir = "./logs"
+            self.resume_from_checkpoint = resume_checkpoint  # Add resume capability
 
             # Advanced training arguments
             self.freeze_backbone = getattr(args, 'freeze_backbone', False)
@@ -116,6 +144,10 @@ def run_training(args):
             self.use_advanced_aug = getattr(args, 'use_advanced_aug', False)
             self.cutmix_prob = getattr(args, 'cutmix_prob', 0.5)
             self.gpu_device = getattr(args, 'gpu_device', None)
+            
+            # Colab-friendly settings
+            self.save_every_n_epochs = getattr(args, 'save_every_n_epochs', 5)  # Save every 5 epochs
+            self.save_final_weights = True
     
     training_args = TrainingArgs()
     
@@ -135,11 +167,61 @@ def run_training(args):
     # Run training
     try:
         model, trainer = train_model(training_args)
+        
+        # Save final model weights
+        save_final_weights(model, args)
+        
         logger.info("🎉 Training completed successfully!")
+        logger.info("💾 Model weights saved!")
         return True
     except Exception as e:
         logger.error(f"❌ Training failed: {e}")
         return False
+
+def save_final_weights(model, args):
+    """Save final model weights in multiple formats"""
+    import torch
+    from datetime import datetime
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    weights_dir = Path("./model_weights")
+    weights_dir.mkdir(exist_ok=True)
+    
+    try:
+        # Save PyTorch state dict (most portable)
+        torch.save(model.state_dict(), 
+                  weights_dir / f"model_weights_{args.model}_{timestamp}.pth")
+        
+        # Save complete model (includes architecture)
+        torch.save(model, 
+                  weights_dir / f"complete_model_{args.model}_{timestamp}.pt")
+        
+        # Save model info
+        model_info = {
+            'model_name': args.model,
+            'timestamp': timestamp,
+            'parameters': sum(p.numel() for p in model.parameters()),
+            'architecture': str(model.__class__.__name__),
+            'training_args': {
+                'batch_size': args.batch_size,
+                'learning_rate': args.learning_rate,
+                'epochs': args.epochs,
+                'loss_type': getattr(args, 'loss_type', 'focal'),
+                'use_attention': getattr(args, 'use_attention', 'none')
+            }
+        }
+        
+        import json
+        with open(weights_dir / f"model_info_{timestamp}.json", 'w') as f:
+            json.dump(model_info, f, indent=2)
+        
+        logger.info(f"💾 Final weights saved to: {weights_dir}")
+        logger.info(f"   - PyTorch weights: model_weights_{args.model}_{timestamp}.pth")
+        logger.info(f"   - Complete model: complete_model_{args.model}_{timestamp}.pt") 
+        logger.info(f"   - Model info: model_info_{timestamp}.json")
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Could not save final weights: {e}")
 
 def run_evaluation(checkpoint_path, args):
     """Run evaluation on trained model"""
@@ -148,7 +230,7 @@ def run_evaluation(checkpoint_path, args):
     from train_multi_abnormality_model import evaluate_model
     
     try:
-        metrics = evaluate_model(checkpoint_path, args.slice_dir, args.data_dir)
+        metrics = evaluate_model(checkpoint_path, args.slice_dir, args.slice_dir)
         logger.info("🎉 Evaluation completed successfully!")
         return metrics
     except Exception as e:
@@ -243,6 +325,16 @@ def main():
                        help="Learning rate")
     parser.add_argument("--epochs", type=int, default=100,
                        help="Number of epochs")
+    parser.add_argument("--early-stopping-patience", type=int, default=10,
+                       help="Early stopping patience (epochs without improvement)")
+
+    # Colab-friendly checkpoint options
+    parser.add_argument("--resume", action="store_true", default=True,
+                       help="Resume from the most recent checkpoint if available")
+    parser.add_argument("--force-restart", action="store_true",
+                       help="Force restart training from scratch (ignore existing checkpoints)")
+    parser.add_argument("--save-every-n-epochs", type=int, default=5,
+                       help="Save checkpoint every N epochs (for Colab timeout protection)")
 
     # Advanced training parameters
     parser.add_argument("--freeze-backbone", action="store_true",

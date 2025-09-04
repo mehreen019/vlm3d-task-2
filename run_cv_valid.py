@@ -23,6 +23,12 @@ def main():
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--freeze-backbone", action="store_true")
     ap.add_argument("--gpu-device", type=int, default=None)
+    ap.add_argument("--use-attention", choices=["none", "se", "cbam"], default="none")
+    ap.add_argument("--use-multiscale", action="store_true")
+    ap.add_argument("--cutmix-prob", type=float, default=0.5)
+    ap.add_argument("--batch-size", type=int, default=32)
+    ap.add_argument("--early-stopping-patience", type=int, default=10)
+    ap.add_argument("--progressive-unfreeze", action="store_true")
     args = ap.parse_args()
 
     cv_dir     = Path(args.cv_dir)
@@ -57,9 +63,17 @@ def main():
                    "--mode", "both",
                    "--model", args.model,
                    "--loss-type", args.loss_type,
-                   "--epochs", str(args.epochs)]
+                   "--epochs", str(args.epochs),
+                   "--batch-size", str(args.batch_size),
+                   "--early-stopping-patience", str(args.early_stopping_patience),
+                   "--use-attention", args.use_attention,
+                   "--cutmix-prob", str(args.cutmix_prob)]
             if args.freeze_backbone:
                 cmd.append("--freeze-backbone")
+            if args.use_multiscale:
+                cmd.append("--use-multiscale")
+            if args.progressive_unfreeze:
+                cmd.append("--progressive-unfreeze")
             if args.gpu_device is not None:
                 cmd += ["--gpu-device", str(args.gpu_device)]
 
