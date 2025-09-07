@@ -25,6 +25,7 @@ from plotly.subplots import make_subplots
 import plotly.figure_factory as ff
 from scipy import ndimage
 from skimage import measure, filters
+
 import cv2
 
 warnings.filterwarnings('ignore')
@@ -72,29 +73,44 @@ class CTVisualizationSuite:
         dfs = []
         if train_file.exists():
             train_df = pd.read_csv(train_file)
-            train_df['split'] = 'train'
+            # Check if split column already exists (it does in our data)
+            if 'split' not in train_df.columns:
+                train_df['split'] = 'train'
             dfs.append(train_df)
             
         if valid_file.exists():
             valid_df = pd.read_csv(valid_file)
-            valid_df['split'] = 'valid'
+            # Check if split column already exists (it does in our data)
+            if 'split' not in valid_df.columns:
+                valid_df['split'] = 'valid'
             dfs.append(valid_df)
             
         if dfs:
             return pd.concat(dfs, ignore_index=True)
         else:
-            logger.error(f"Split files not found in {self.data_dir / 'splits'}")
-            return pd.DataFrame()
+            logger.warning(f"Split files not found in {self.data_dir / 'splits'}, trying main metadata file")
+            # Fallback to main metadata.csv if split files don't exist
+            metadata_file = self.data_dir / "metadata.csv"
+            if metadata_file.exists():
+                return pd.read_csv(metadata_file)
+            else:
+                logger.error(f"No metadata files found")
+                return pd.DataFrame()
 
     def load_labels(self) -> pd.DataFrame:
-        """Load multi-abnormality labels from 2D slice directory"""
-        # Labels are stored in the 2D directory after processing
-        labels_file = self.slice_dir / "multi_abnormality_labels.csv"
-        if labels_file.exists():
-            return pd.read_csv(labels_file)
-        else:
-            logger.error(f"Labels file not found: {labels_file}")
-            return pd.DataFrame()
+        """Load multi-abnormality labels"""
+        # First try the 2D directory
+        labels_file_2d = self.slice_dir / "multi_abnormality_labels.csv"
+        if labels_file_2d.exists():
+            return pd.read_csv(labels_file_2d)
+        
+        # Fallback to main data directory
+        labels_file_main = self.data_dir / "multi_abnormality_labels.csv"
+        if labels_file_main.exists():
+            return pd.read_csv(labels_file_main)
+        
+        logger.error(f"Labels file not found in {self.slice_dir} or {self.data_dir}")
+        return pd.DataFrame()
 
     def load_slice_data(self, split: str = "train") -> pd.DataFrame:
         """Load 2D slice metadata"""
@@ -109,8 +125,11 @@ class CTVisualizationSuite:
         """Create comprehensive dataset overview visualizations"""
         logger.info("Creating dataset overview visualizations...")
         
-        # Merge metadata and labels
-        df = pd.merge(metadata_df, labels_df, on=["VolumeName", "split"], how="inner")
+        # Merge metadata and labels - handle different split column scenarios
+        if 'split' in metadata_df.columns and 'split' in labels_df.columns:
+            df = pd.merge(metadata_df, labels_df, on=["VolumeName", "split"], how="inner")
+        else:
+            df = pd.merge(metadata_df, labels_df, on="VolumeName", how="inner")
         
         fig, axes = plt.subplots(2, 3, figsize=(18, 12))
         fig.suptitle("CT-RATE Dataset Overview", fontsize=16, fontweight='bold')
@@ -212,28 +231,71 @@ class CTVisualizationSuite:
 
     def visualize_3d_volume_analysis(self, metadata_df: pd.DataFrame, labels_df: pd.DataFrame, n_samples: int = 6):
         """Create 3D volume analysis visualizations"""
-        logger.info("Skipping 3D volume analysis - CT volumes not downloaded (space constraints)")
+        logger.info("Creating 3D volume analysis...")
         
-        # Create a placeholder visualization explaining the situation
-        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-        ax.text(0.5, 0.5, 
-               "3D CT Volume Analysis\n\n" +
-               "CT volumes not available due to storage constraints.\n" +
-               "Only metadata and 2D slices are processed.\n\n" +
-               "To enable 3D analysis, run:\n" +
-               "python ct_rate_downloader.py --download-volumes", 
-               ha='center', va='center', transform=ax.transAxes,
-               fontsize=14, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray"))
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis('off')
-        ax.set_title("3D CT Volume Analysis - Not Available", fontsize=16, fontweight='bold')
+        # Check if volumes directory exists
+        volumes_dir = self.data_dir / "ct_rate_volumes"
+        if not volumes_dir.exists():
+            logger.info("CT volumes directory not found - creating placeholder")
+            self._create_3d_placeholder()
+            return
+            
+        # Merge metadata and labels for analysis
+        if 'split' in metadata_df.columns and 'split' in labels_df.columns:
+            df = pd.merge(metadata_df, labels_df, on=["VolumeName", "split"], how="inner")
+        else:
+            df = pd.merge(metadata_df, labels_df, on="VolumeName", how="inner")
+            
+        if df.empty:
+            logger.warning("No matching data between metadata and labels")
+            self._create_3d_placeholder()
+            return
+            
+        # Select representative samples
+        sample_volumes = self._select_representative_volumes(df, n_samples)
         
+        # Create visualization
+        fig, axes = plt.subplots(n_samples, 4, figsize=(16, 4 * n_samples))
+        if n_samples == 1:
+            axes = axes.reshape(1, -1)
+        fig.suptitle("3D CT Volume Analysis - Representative Samples", fontsize=16, fontweight='bold')
+        
+        successful_plots = 0
+        for i, (_, volume_data) in enumerate(sample_volumes.iterrows()):
+            if i >= n_samples:
+                break
+                
+            volume_name = volume_data['VolumeName']
+            # Handle different split column names from merging
+            split = volume_data.get('split_x', volume_data.get('split_y', volume_data.get('split', 'train')))
+            
+            # Try to load volume
+            volume_path = volumes_dir / split / volume_name
+            if not volume_path.exists():
+                # Try other split
+                other_split = 'valid' if split == 'train' else 'train'
+                volume_path = volumes_dir / other_split / volume_name
+                
+            if volume_path.exists():
+                volume, volume_info = self._load_volume(volume_path)
+                if volume is not None:
+                    self._plot_multiplanar_view(volume, axes[i], volume_name, volume_data)
+                    successful_plots += 1
+                else:
+                    self._plot_placeholder(axes[i], f"Failed to load\n{volume_name}")
+            else:
+                self._plot_placeholder(axes[i], f"Volume not found\n{volume_name}")
+        
+        # Fill remaining slots if needed
+        for i in range(successful_plots, n_samples):
+            self._plot_placeholder(axes[i], "No additional\nvolumes available")
+            
         plt.tight_layout()
         plt.savefig(self.output_dir / "3d_volume_analysis.png", dpi=300, bbox_inches='tight')
         plt.close()
         
-        logger.info(f"3D volume analysis placeholder saved to {self.output_dir / '3d_volume_analysis.png'}")
+        logger.info(f"3D volume analysis saved to {self.output_dir / '3d_volume_analysis.png'}")
+        logger.info(f"Successfully analyzed {successful_plots} out of {n_samples} requested volumes")
 
     def visualize_2d_slice_analysis(self, slice_df: pd.DataFrame):
         """Create 2D slice analysis visualizations"""
@@ -345,7 +407,11 @@ class CTVisualizationSuite:
         """Create comprehensive statistical summary"""
         logger.info("Creating statistical summary report...")
         
-        df = pd.merge(metadata_df, labels_df, on=["VolumeName", "split"], how="inner")
+        # Merge metadata and labels - handle different split column scenarios  
+        if 'split' in metadata_df.columns and 'split' in labels_df.columns:
+            df = pd.merge(metadata_df, labels_df, on=["VolumeName", "split"], how="inner")
+        else:
+            df = pd.merge(metadata_df, labels_df, on="VolumeName", how="inner")
         
         # Prepare summary statistics
         stats = {
@@ -600,12 +666,39 @@ class CTVisualizationSuite:
                 axes[i].set_xticks([])
                 axes[i].set_yticks([])
 
+    def _create_3d_placeholder(self):
+        """Create placeholder for 3D analysis when volumes not available"""
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        ax.text(0.5, 0.5, 
+               "3D CT Volume Analysis\n\n" +
+               "CT volumes not available due to storage constraints.\n" +
+               "Only metadata and 2D slices are processed.\n\n" +
+               "To enable 3D analysis, run:\n" +
+               "python ct_rate_downloader.py --download-volumes", 
+               ha='center', va='center', transform=ax.transAxes,
+               fontsize=14, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray"))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        ax.set_title("3D CT Volume Analysis - Not Available", fontsize=16, fontweight='bold')
+        
+        plt.tight_layout()
+        plt.savefig(self.output_dir / "3d_volume_analysis.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        logger.info(f"3D volume analysis placeholder saved to {self.output_dir / '3d_volume_analysis.png'}")
+
     def _plot_placeholder(self, axes, message: str):
         """Plot placeholder for missing data"""
-        for ax in axes:
-            ax.text(0.5, 0.5, message, ha='center', va='center', transform=ax.transAxes)
-            ax.set_xticks([])
-            ax.set_yticks([])
+        if isinstance(axes, np.ndarray):
+            for ax in axes:
+                ax.text(0.5, 0.5, message, ha='center', va='center', transform=ax.transAxes)
+                ax.set_xticks([])
+                ax.set_yticks([])
+        else:
+            axes.text(0.5, 0.5, message, ha='center', va='center', transform=axes.transAxes)
+            axes.set_xticks([])
+            axes.set_yticks([])
 
 def main():
     parser = argparse.ArgumentParser(description="CT-RATE Visualization Suite")
