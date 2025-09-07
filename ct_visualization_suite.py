@@ -145,7 +145,8 @@ class CTVisualizationSuite:
         # 3. Number of abnormalities per volume distribution
         label_cols = [col for col in self.abnormality_classes if col in df.columns]
         n_abnormalities = df[label_cols].sum(axis=1)
-        axes[0, 2].hist(n_abnormalities, bins=range(0, max(n_abnormalities)+2), 
+        max_abn = int(n_abnormalities.max()) if not n_abnormalities.empty else 0
+        axes[0, 2].hist(n_abnormalities, bins=range(0, max_abn+2), 
                         alpha=0.7, color='lightgreen', edgecolor='black')
         axes[0, 2].set_xlabel('Number of Abnormalities')
         axes[0, 2].set_ylabel('Frequency')
