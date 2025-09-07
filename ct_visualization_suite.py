@@ -64,17 +64,32 @@ class CTVisualizationSuite:
         logger.info(f"Output dir: {self.output_dir}")
 
     def load_metadata(self) -> pd.DataFrame:
-        """Load merged metadata from downloader"""
-        metadata_file = self.data_dir / "metadata.csv"
-        if metadata_file.exists():
-            return pd.read_csv(metadata_file)
+        """Load metadata from splits directory"""
+        # Load train and valid splits and combine them
+        train_file = self.data_dir / "splits" / "train.csv"
+        valid_file = self.data_dir / "splits" / "valid.csv"
+        
+        dfs = []
+        if train_file.exists():
+            train_df = pd.read_csv(train_file)
+            train_df['split'] = 'train'
+            dfs.append(train_df)
+            
+        if valid_file.exists():
+            valid_df = pd.read_csv(valid_file)
+            valid_df['split'] = 'valid'
+            dfs.append(valid_df)
+            
+        if dfs:
+            return pd.concat(dfs, ignore_index=True)
         else:
-            logger.error(f"Metadata file not found: {metadata_file}")
+            logger.error(f"Split files not found in {self.data_dir / 'splits'}")
             return pd.DataFrame()
 
     def load_labels(self) -> pd.DataFrame:
-        """Load multi-abnormality labels"""
-        labels_file = self.data_dir / "multi_abnormality_labels.csv"
+        """Load multi-abnormality labels from 2D slice directory"""
+        # Labels are stored in the 2D directory after processing
+        labels_file = self.slice_dir / "multi_abnormality_labels.csv"
         if labels_file.exists():
             return pd.read_csv(labels_file)
         else:
@@ -196,39 +211,28 @@ class CTVisualizationSuite:
 
     def visualize_3d_volume_analysis(self, metadata_df: pd.DataFrame, labels_df: pd.DataFrame, n_samples: int = 6):
         """Create 3D volume analysis visualizations"""
-        logger.info("Creating 3D volume analysis...")
+        logger.info("Skipping 3D volume analysis - CT volumes not downloaded (space constraints)")
         
-        df = pd.merge(metadata_df, labels_df, on=["VolumeName", "split"], how="inner")
-        
-        # Sample volumes with different abnormality patterns
-        sample_volumes = self._select_representative_volumes(df, n_samples)
-        
-        fig, axes = plt.subplots(n_samples, 4, figsize=(16, 4*n_samples))
-        if n_samples == 1:
-            axes = axes.reshape(1, -1)
-        
-        fig.suptitle("3D CT Volume Analysis - Multi-Planar Views", fontsize=16, fontweight='bold')
-        
-        for i, (_, volume_data) in enumerate(sample_volumes.iterrows()):
-            volume_name = volume_data['VolumeName']
-            split = volume_data['split']
-            
-            # Load volume
-            volume_path = self.data_dir / "ct_rate_volumes" / split / volume_name
-            if volume_path.exists():
-                volume, _ = self._load_volume(volume_path)
-                if volume is not None:
-                    self._plot_multiplanar_view(volume, axes[i], volume_name, volume_data)
-                else:
-                    self._plot_placeholder(axes[i], f"Failed to load: {volume_name}")
-            else:
-                self._plot_placeholder(axes[i], f"File not found: {volume_name}")
+        # Create a placeholder visualization explaining the situation
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        ax.text(0.5, 0.5, 
+               "3D CT Volume Analysis\n\n" +
+               "CT volumes not available due to storage constraints.\n" +
+               "Only metadata and 2D slices are processed.\n\n" +
+               "To enable 3D analysis, run:\n" +
+               "python ct_rate_downloader.py --download-volumes", 
+               ha='center', va='center', transform=ax.transAxes,
+               fontsize=14, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray"))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        ax.set_title("3D CT Volume Analysis - Not Available", fontsize=16, fontweight='bold')
         
         plt.tight_layout()
         plt.savefig(self.output_dir / "3d_volume_analysis.png", dpi=300, bbox_inches='tight')
         plt.close()
         
-        logger.info(f"3D volume analysis saved to {self.output_dir / '3d_volume_analysis.png'}")
+        logger.info(f"3D volume analysis placeholder saved to {self.output_dir / '3d_volume_analysis.png'}")
 
     def visualize_2d_slice_analysis(self, slice_df: pd.DataFrame):
         """Create 2D slice analysis visualizations"""
@@ -558,10 +562,21 @@ class CTVisualizationSuite:
             if i >= len(axes):
                 break
             
-            slice_path = self.slice_dir / row['file_path']
+            # Fix the path construction - file_path should be relative to slice_dir
+            if 'file_path' in row.index:
+                slice_path = self.slice_dir / row['file_path']
+            else:
+                # Fallback: construct path from slice_id
+                slice_id = row.get('slice_id', f"unknown_{i}")
+                split = row.get('split', 'train')
+                slice_path = self.slice_dir / "slices" / split / f"{slice_id}.npy"
+            
             if slice_path.exists():
                 try:
                     slice_data = np.load(slice_path)
+                    # Ensure proper contrast - normalize if needed
+                    if slice_data.max() > slice_data.min():
+                        slice_data = (slice_data - slice_data.min()) / (slice_data.max() - slice_data.min())
                     axes[i].imshow(slice_data, cmap='gray', vmin=0, vmax=1)
                     
                     # Find abnormalities
@@ -574,12 +589,13 @@ class CTVisualizationSuite:
                     axes[i].set_title(f"{title_prefix}\n{abn_text}", fontsize=9)
                     axes[i].axis('off')
                 except Exception as e:
-                    axes[i].text(0.5, 0.5, f'Error loading\n{row["slice_id"]}', 
-                               ha='center', va='center', transform=axes[i].transAxes)
+                    axes[i].text(0.5, 0.5, f'Error loading\n{slice_path.name}\n{str(e)[:30]}', 
+                               ha='center', va='center', transform=axes[i].transAxes, fontsize=8)
                     axes[i].set_xticks([])
                     axes[i].set_yticks([])
             else:
-                axes[i].text(0.5, 0.5, 'File not found', ha='center', va='center', transform=axes[i].transAxes)
+                axes[i].text(0.5, 0.5, f'File not found:\n{slice_path.name}', 
+                           ha='center', va='center', transform=axes[i].transAxes, fontsize=8)
                 axes[i].set_xticks([])
                 axes[i].set_yticks([])
 
