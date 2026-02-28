@@ -44,7 +44,7 @@ It uses the `ct_rate_data` directory as the input and creates the `ct_rate_2d` d
 python 2d_slice_extractor.py --data-dir ./ct_rate_data --output-dir ./ct_rate_2d --strategy multi_slice --slices-per-volume 12 
 ```
 
-## Download ct-clip models
+## Download ct-clip modelss
 
 ```bash
 python download_ctclip_models.py
